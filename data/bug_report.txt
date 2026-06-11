@@ -1,0 +1,53 @@
+From: priya.sharma@flipkart.com
+To: slap-bugs@flipkart.com
+Subject: [SLAP] Chat response freezes after adding item to cart from AI suggestion
+
+Hi Team,
+
+I've been testing the SLAP app on Android (v2.4.1, build 20260605) and ran into a
+reproducible freeze when adding an item to the cart directly from a chat
+recommendation.
+
+**What happened:**
+After the AI suggests a product and the user taps "Add to Cart" inside the chat
+thread, the chat screen freezes completely. The loading spinner appears but never
+goes away. The item does NOT get added to the cart. The user has to force-kill the
+app to recover.
+
+**Steps to Reproduce:**
+1. Open SLAP app on Android (v2.4.1)
+2. Start a new chat session
+3. Ask the AI for a product recommendation (e.g., "suggest a good running shoe under 3000")
+4. AI responds with product cards
+5. Tap "Add to Cart" on any suggested product
+6. Observe: spinner appears, screen freezes, no confirmation toast
+
+**Expected Result:**
+Item is added to the cart, a confirmation toast ("Added to cart!") appears, and the
+chat remains interactive.
+
+**Actual Result:**
+Chat screen freezes indefinitely with a loading spinner. App must be force-killed.
+
+**Reproducibility:** 100% consistent on Android v2.4.1. Tested on 3 different
+devices (Pixel 6, Samsung S22, OnePlus 11).
+
+**Environment:**
+- Platform: Android
+- App Version: 2.4.1 (build 20260605)
+- OS: Android 13 / Android 14
+- Network: WiFi + 4G (both affected)
+
+**Impact:**
+This completely blocks the primary conversion flow — users cannot purchase from AI
+recommendations. Core revenue-generating feature is broken.
+
+**Additional context:**
+This started happening after the v2.4.0 → v2.4.1 release on 2026-06-04. The
+same flow works fine on iOS v2.4.1. No error is shown to the user.
+
+Attaching screen recording (freeze_repro.mp4) and logcat output (logcat_20260609.txt).
+
+Regards,
+Priya Sharma
+QA Engineer, SLAP
