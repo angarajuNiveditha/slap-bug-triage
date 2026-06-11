@@ -1,0 +1,22 @@
+# Secrets — never commit
+.env
+
+# Generated outputs
+output/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+.venv/
+venv/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# sentence-transformers model cache
+.cache/
