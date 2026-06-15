@@ -3,6 +3,7 @@
 
 # Generated outputs
 output/
+output_claude/
 
 # Python artifacts
 __pycache__/
