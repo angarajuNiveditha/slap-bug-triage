@@ -1,0 +1,40 @@
+From: ananya.iyer@flipkart.com
+To: slap-bugs@flipkart.com
+Subject: Login failing with "Failed to verify" error for some users
+
+Hi Team,
+
+Some users are unable to log into SLAP. They enter their phone number
+and OTP correctly but get a "Failed to verify" error and cannot
+proceed. The login just fails with no helpful message.
+
+I reproduced this with the phone number 7087935097 — it consistently
+fails to authenticate even with the correct OTP.
+
+Steps to Reproduce:
+1. Open SLAP app
+2. Enter phone number 7087935097 on the login screen
+3. Request and enter the correct OTP
+4. Tap verify/submit
+5. App shows "Failed to verify" error
+
+Expected: User is authenticated and lands on the home screen.
+Actual: Authentication fails with "Failed to verify" — user is
+        stuck on the login screen and cannot access the app.
+
+Reproducibility: 100% for this specific credential. May affect
+                 other users too — need to investigate the scope.
+
+Impact:
+Affected users are completely locked out of SLAP. Cannot browse,
+chat, or purchase anything. If this affects a broader set of
+credentials it could be a significant login outage.
+
+Environment:
+- Platform: Android (v2.4.1), likely cross-platform
+- Affected credential: 7087935097
+- Auth flow: OTP based login
+
+Thanks,
+Ananya Iyer
+QA Engineer, SLAP

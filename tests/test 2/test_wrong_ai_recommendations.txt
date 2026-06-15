@@ -1,0 +1,51 @@
+From: meera.nair@flipkart.com
+To: slap-bugs@flipkart.com
+Subject: SLAP AI chat giving completely wrong product recommendations
+
+Hi,
+
+Found a significant issue with the AI recommendation engine in SLAP.
+When users ask for a product in a specific price range, the AI is
+consistently recommending products outside that range — sometimes 3-4x
+the stated budget.
+
+Example: I asked "suggest a bluetooth speaker under ₹1500" and the AI
+recommended JBL Charge 5 (₹7,499) and Sony SRS-XB23 (₹4,990). Neither
+is under ₹1500.
+
+This is happening across all product categories I tested —
+electronics, footwear, and clothing.
+
+Steps to Reproduce:
+1. Open SLAP and start a new chat
+2. Ask for a product recommendation with a price constraint
+   (e.g. "show me running shoes under ₹2000")
+3. Observe the recommendations returned by the AI
+4. Check the actual prices of recommended items
+
+Expected: All recommendations should be within the stated budget.
+Actual: Recommendations frequently exceed the stated price constraint,
+        sometimes by 2-5x.
+
+Reproducibility: ~80% of the time. Occasionally it gets it right.
+
+Impact:
+Users are losing trust in the AI assistant. If users can't rely on
+price filters, the core value proposition of SLAP breaks down.
+Multiple user complaints coming in via support tickets.
+Affects all platforms (Android + iOS + Web).
+
+Environment:
+- Platform: Android, iOS, Web (all affected)
+- App Version: 2.4.1
+- Tested across 3 accounts
+
+Additional context: This might be a backend/model issue rather than
+a frontend bug. The product catalog prices are correct in the regular
+Flipkart app for the same items.
+
+Screenshots attached.
+
+Thanks,
+Meera Nair
+Product Manager, SLAP

@@ -1,0 +1,14 @@
+From: sneha.patel@flipkart.com
+To: slap-bugs@flipkart.com
+Subject: SLAP is broken
+
+Hi,
+
+The app is not working properly. When I use the chat feature something
+goes wrong and the response doesn't come. I waited for like 5 minutes
+and nothing happened. The chat just shows "thinking..." forever.
+
+This is very frustrating. Please look into it.
+
+Thanks
+Sneha
