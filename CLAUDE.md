@@ -8,9 +8,12 @@ Flipkart's GenAI conversational shopping app). It takes a raw bug report email
 finds duplicates, suggests an owner, scores severity, and outputs a
 dev-ready Jira ticket draft as JSON.
 
-**Two pipelines exist:**
-- `run_agent.py` — **fully working today**, no Anthropic API key needed. Uses rule-based parsing, TF-IDF similarity, and multi-layer scoring.
-- `main.py` — original design using Claude API for parsing + scoring. Blocked until `ANTHROPIC_API_KEY` is provided.
+**Three pipelines exist:**
+- `run_agent.py` — **fully working today**, no Anthropic API key needed. Uses rule-based parsing, TF-IDF similarity, and multi-layer scoring. ~35 ms per bug.
+- `run_claude_agent.py` — **also fully working today**, no API key needed. Uses Claude Code in headless mode (`claude -p`) for all three stages (parse, semantic similarity over 300 bugs, severity reasoning). Authenticates via the local Claude Code session. ~50–90 s per bug.
+- `main.py` — original design using the Anthropic Python SDK. Blocked until `ANTHROPIC_API_KEY` is provided; kept for reference / production swap.
+
+**Front-end:** `app.py` is a Streamlit UI that wraps both working pipelines with a side-by-side toggle. Run with `streamlit run app.py` → `localhost:8501`.
 
 **This is a prototype only. It never writes to Jira. All Jira access is read-only.**
 
@@ -20,26 +23,35 @@ dev-ready Jira ticket draft as JSON.
 
 ```
 slap-bug-triage/
-├── run_agent.py             # PRIMARY: agent pipeline (no API key required)
-├── main.py                  # ORIGINAL: Claude API pipeline (needs ANTHROPIC_API_KEY)
+├── app.py                    # Streamlit UI — runs either pipeline with a toggle
+├── run_agent.py              # Rule-based pipeline (no API key)
+├── run_claude_agent.py       # Claude Code headless pipeline (no API key)
+├── main.py                   # Anthropic SDK pipeline (needs ANTHROPIC_API_KEY) — blocked
+├── TRIAGE_LOGIC.md           # PM-style report of the triage logic, for mentor review
 │
 ├── src/
 │   │
-│   │  ── Agent pipeline modules (run_agent.py uses these) ──
-│   ├── agent_parser.py       # Rule-based email → BugReport extractor (regex + heuristics)
-│   ├── agent_scorer.py       # Multi-layer priority scorer (keywords → templates → voting)
-│   ├── tfidf_similarity.py   # TF-IDF cosine similarity engine (scikit-learn, no GPU)
-│   ├── agent_ticket_builder.py # ADF ticket builder wired to agent modules
+│   │  ── Rule-based pipeline (run_agent.py) ──
+│   ├── agent_parser.py        # email → BugReport via regex + heuristics
+│   ├── agent_scorer.py        # multi-layer priority scorer
+│   ├── tfidf_similarity.py    # TF-IDF cosine similarity (scikit-learn)
+│   ├── agent_ticket_builder.py # ADF ticket builder (shared by Claude pipeline too)
 │   │
-│   │  ── Original pipeline modules (main.py uses these) ──
-│   ├── parser.py             # Claude API → BugReport
-│   ├── severity_scorer.py    # Claude API → SeverityResult
-│   ├── similarity.py         # sentence-transformers similarity engine
-│   └── ticket_builder.py     # ADF ticket builder (original)
+│   │  ── Claude Code headless pipeline (run_claude_agent.py) ──
+│   ├── claude_cli.py          # subprocess wrapper around `claude -p`
+│   ├── claude_parser.py       # email → BugReport via Claude
+│   ├── claude_similarity.py   # 300 bugs + new bug → similar bugs (replaces TF-IDF)
+│   ├── claude_scorer.py       # bug + similar → SeverityResult via Claude
 │   │
-│   └── jira_client.py        # Shared: read-only Jira REST v3 wrapper
+│   │  ── Anthropic SDK pipeline (main.py — blocked) ──
+│   ├── parser.py              # Anthropic SDK → BugReport
+│   ├── severity_scorer.py     # Anthropic SDK → SeverityResult
+│   ├── similarity.py          # sentence-transformers similarity engine
+│   ├── ticket_builder.py      # ADF ticket builder (original)
+│   │
+│   └── jira_client.py         # Shared: read-only Jira REST v3 wrapper
 │
-├── data/                     # Input bug report emails (.txt files)
+├── data/                      # Input bug report emails (.txt files)
 │   ├── bug_report.txt                     # original sample (cart freeze)
 │   ├── bug_01_p0_checkout_crash.txt       # P0: checkout crash, all Android users
 │   ├── bug_02_p1_search_wrong_results.txt # P1: AI ignores price constraints
@@ -56,9 +68,15 @@ slap-bug-triage/
 │   ├── bug_comp_belippi.txt               # component test: BE_Flippi (price filter ignored)
 │   └── bug_comp_unclassified.txt          # component test: bugs/unclassified (vague)
 │
-├── output/                   # Generated ticket drafts (gitignored)
-├── .env                      # Secrets — never commit
-├── .env.example              # Template for .env
+├── tests/                     # 15 paired tests for mentor review (.txt + .json + _claude.json)
+│   ├── _build.py              # generator: extracts triage_notes from output/ into tests/
+│   ├── _run_claude.py         # generator: runs the Claude pipeline on every test
+│   └── test 1/ ... test 15/   # one folder per test (input + both pipelines' triage_notes)
+│
+├── output/                    # Rule-based pipeline outputs (gitignored)
+├── output_claude/             # Claude pipeline outputs (gitignored)
+├── .env                       # Secrets — never commit
+├── .env.example               # Template for .env
 └── requirements.txt
 ```
 
@@ -70,15 +88,25 @@ slap-bug-triage/
 # Install dependencies (first time only)
 pip3 install -r requirements.txt
 
-# Run agent pipeline on ALL .txt files in data/
-python3 run_agent.py
+# ── Rule-based pipeline (fast, deterministic, no API key) ─────────────────
+python3 run_agent.py                                       # all data/*.txt
+python3 run_agent.py data/bug_01_p0_checkout_crash.txt     # specific file
+# Output → output/ticket_<stem>_<timestamp>.json
 
-# Run on specific file(s)
-python3 run_agent.py data/bug_01_p0_checkout_crash.txt
-python3 run_agent.py data/bug_comp_immersive.txt data/bug_comp_ds.txt
+# ── Claude Code headless pipeline (semantic, no API key) ─────────────────
+# Requires the Claude Code CLI installed and logged in on this machine.
+python3 run_claude_agent.py                                # all data/*.txt (~15 min total)
+python3 run_claude_agent.py data/bug_01_p0_checkout_crash.txt
+# Output → output_claude/ticket_<stem>_<timestamp>.json
+
+# ── Streamlit front-end (both pipelines, side-by-side toggle) ────────────
+streamlit run app.py
+# Opens at http://localhost:8501. First load fetches 300 Jira bugs (~5s).
+
+# ── Regenerate the tests/ folder for mentor review ───────────────────────
+python3 tests/_build.py        # rule-based triage_notes → tests/test N/*.json
+python3 tests/_run_claude.py   # Claude triage_notes → tests/test N/*_claude.json
 ```
-
-Output written to `output/ticket_<input_stem>_<timestamp>.json`.
 
 ---
 
@@ -96,7 +124,9 @@ ANTHROPIC_API_KEY=             # only needed for main.py, not run_agent.py
 Verified working against `flipkart.atlassian.net` on 2026-06-10.
 
 **Anthropic API key**: Pending — `console.anthropic.com` is blocked on Flipkart
-network. Only required if switching to `main.py`.
+network. Only required for `main.py` (the Anthropic SDK pipeline).
+**Neither `run_agent.py` nor `run_claude_agent.py` need it** — the Claude pipeline
+authenticates via the locally signed-in Claude Code session instead.
 
 ---
 
@@ -238,6 +268,59 @@ and signal decided the priority. Useful for debugging and tuning.
 
 ---
 
+## Claude Code headless pipeline (run_claude_agent.py)
+
+Same 8-step shape as `run_agent.py`, but the three "intelligence" stages are
+replaced by Claude Code calls (`claude -p`) instead of rule-based code:
+
+| Stage | Rule-based module | Claude Code module |
+|---|---|---|
+| Parse email → BugReport | `agent_parser.py` (regex) | `claude_parser.py` |
+| Find similar past bugs | `tfidf_similarity.py` (TF-IDF cosine) | `claude_similarity.py` |
+| Score severity | `agent_scorer.py` (multi-layer) | `claude_scorer.py` |
+
+`jira_client.py` and `agent_ticket_builder.py` are reused unchanged. The
+outputs land in `output_claude/` (gitignored) with the same JSON shape as
+`output/`, except `pipeline` is `"claude-code-headless"`.
+
+### How the headless mode works
+
+`src/claude_cli.py` wraps `subprocess.run(["claude", "-p", prompt, "--output-format", "json"])`:
+
+1. Spawns the `claude` CLI in non-interactive mode (no API key required —
+   uses the local Claude Code session's authentication).
+2. Parses the JSON envelope, extracts the `result` field.
+3. Strips ```` ```json … ``` ```` fences (Claude often wraps JSON answers in
+   markdown).
+4. Parses the inner JSON and returns it to the caller.
+
+Each subprocess call is independent — no shared session state across stages.
+
+### Why Claude similarity beats TF-IDF on hard cases
+
+The Claude similarity engine sends **all 300 historical bugs** as context
+(~30k tokens) on every query, then asks Claude to rank them. This is slow
+(~30–60s per query) but **semantically aware** in ways TF-IDF is not.
+
+Example: `bug_01_p0_checkout_crash` (Android, "Proceed to Pay" crash):
+- **TF-IDF top match**: FLIPPI-1663 *Checkout Page Price Discrepancy* (sim 0.18) — matched on the word "checkout."
+- **Claude top match**: FLIPPI-1198 *[iOS] App crashing on "continue to payment"* (sim 0.85, flagged duplicate) — matched on the failure mode (crash on the pay button), and made the iOS↔Android parallel TF-IDF couldn't.
+
+Trade-off summary:
+
+| | Rule-based | Claude Code |
+|---|---|---|
+| Per-bug latency | ~35 ms | ~50–90 s |
+| Cost | $0 (local CPU) | ~$0.15 (Claude inference) |
+| Determinism | Yes — same input → same output | No — small variations across runs |
+| Handles paraphrases / synonyms | Only what's in the keyword/template list | Yes — reads meaning |
+| Brittle to format changes | Yes (regex-based) | No (LLM adapts) |
+
+For demos and one-shot triage: Claude. For batch automated runs: rule-based.
+The Streamlit UI lets you toggle between them on the same bug.
+
+---
+
 ## Component classification (6 teams)
 
 `_extract_component` in `agent_parser.py` classifies each bug into one of:
@@ -331,26 +414,38 @@ All business logic (dedup logic, component routing, ADF structure) stays the sam
 ## Dependencies
 
 ```
-requests>=2.31.0        # Jira REST API calls
-python-dotenv>=1.0.0    # .env loading
-numpy>=1.26.0           # similarity math
-scikit-learn>=1.9.0     # TF-IDF vectorizer + cosine similarity
-anthropic>=0.25.0       # only needed for main.py (Claude API pipeline)
+requests>=2.31.0              # Jira REST API calls
+python-dotenv>=1.0.0          # .env loading
+numpy>=1.26.0                 # similarity math
+scikit-learn>=1.9.0           # TF-IDF vectorizer + cosine similarity
+streamlit>=1.32.0             # front-end UI (app.py)
+anthropic>=0.25.0             # only needed for main.py (Anthropic SDK pipeline)
 sentence-transformers>=2.7.0  # only needed for main.py (original similarity.py)
 ```
 
-Install: `pip3 install requests python-dotenv numpy scikit-learn`
-(anthropic + sentence-transformers not needed for `run_agent.py`)
+Install minimal set: `pip3 install requests python-dotenv numpy scikit-learn streamlit`
+(`anthropic` + `sentence-transformers` only needed for `main.py`)
+
+External dependency: `run_claude_agent.py` and the Claude toggle in `app.py`
+also require the **Claude Code CLI** to be installed and authenticated on
+this machine (`which claude` should return a path).
 
 ---
 
-## Current status (as of 2026-06-11)
+## Current status (as of 2026-06-15)
 
-- `run_agent.py` fully working end-to-end
+- `run_agent.py` fully working end-to-end (rule-based, ~35 ms/bug)
+- `run_claude_agent.py` fully working end-to-end (Claude Code headless,
+  ~50–90 s/bug, no API key required)
+- `app.py` Streamlit UI with pipeline toggle, clickable Jira links, and
+  4-tab result view (Summary / Triage notes / Raw JSON / Jira ADF)
 - Jira token verified, 300 real FLIPPI bugs fetched successfully
 - 15 test bug reports covering all priority levels (P0–P3) and all 6 team components
+- Both pipelines have been run over the full 15-bug test suite; results saved
+  side-by-side under `tests/test N/` as `<name>.json` (rule-based) and
+  `<name>_claude.json` (Claude)
 - Multi-layer scorer implemented: keywords → templates → weighted voting → fallback
-- Clickable Jira URLs in all similar-bug results
-- `scoring_path` field shows which layer decided every priority
-- Git repo initialized and committed; pushed to GitHub
-- `main.py` (Claude API version) ready but blocked on `ANTHROPIC_API_KEY`
+- `TRIAGE_LOGIC.md` documents the rule-based logic for mentor review
+- Git repo committed and pushed to GitHub
+- `main.py` (Anthropic SDK pipeline) still blocked on `ANTHROPIC_API_KEY` —
+  kept as the production-shape reference
