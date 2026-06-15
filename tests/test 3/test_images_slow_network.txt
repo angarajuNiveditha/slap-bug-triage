@@ -1,0 +1,44 @@
+From: divya.krishnan@flipkart.com
+To: slap-bugs@flipkart.com
+Subject: Product images not loading in SLAP chat on slow network
+
+Hi Team,
+
+Reporting an issue with product images in the SLAP chat interface.
+When a user is on a slow or unstable network (2G/3G or weak 4G),
+product images in AI recommendation cards show a broken image icon
+instead of loading. The image never loads even after waiting for
+several minutes.
+
+Interestingly, the product title and price load fine — only the
+image is broken.
+
+Steps to Reproduce:
+1. Set device to 2G/3G network or use network throttling in dev tools
+2. Open SLAP and ask for a product recommendation
+3. AI responds with product cards
+4. Observe product card images
+
+Expected: Images should either load (with a reasonable timeout) or
+          show a grey placeholder skeleton. Should retry on network
+          improvement.
+Actual: Broken image icon appears and stays broken permanently.
+        No retry, no placeholder, no fallback text.
+
+Reproducibility: 100% on 2G/3G. Intermittent on weak 4G.
+
+Impact:
+Affects users in Tier 2/3 cities where network quality is poor.
+Significant chunk of our target user base. Product cards look broken
+and unprofessional. Users may abandon the session.
+
+Environment:
+- Platform: Android (confirmed), iOS likely too but not tested
+- App Version: 2.4.1
+- Network: 2G/3G, or Chrome DevTools network throttling (Slow 3G)
+
+No crash logs — visual issue only. Screenshot attached.
+
+Regards,
+Divya Krishnan
+UI Engineer, SLAP

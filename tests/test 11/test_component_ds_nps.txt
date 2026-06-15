@@ -1,0 +1,45 @@
+From: panyam.goutham@flipkart.com
+To: slap-bugs@flipkart.com
+Subject: Product page NPS score and %Positive metric showing wrong values — discrepancy vs FK main app
+
+Hi Team,
+
+There is a data discrepancy in the NPS and %Positive metrics shown on the
+SLAP product page versus the same metrics shown on the main Flipkart app.
+
+For the same product (FSN: SHOFY3ZKZH8KZGCD), the SLAP product page displays:
+  - NPS: 62 / %Positive: 74%
+
+But the main FK app shows:
+  - NPS: 78 / %Positive: 89%
+
+The discrepancy is systematic across multiple products I tested. SLAP appears to
+be using stale or incorrectly aggregated NPS data. The %Positive logic in the
+product page module may have a bug in how it filters or weights recent reviews.
+
+Steps to Reproduce:
+1. Open SLAP and ask the AI for a specific product (e.g., a running shoe)
+2. Open the product page for that item inside SLAP
+3. Note the NPS score and %Positive values shown
+4. Open the same product on the main Flipkart app
+5. Compare the NPS and %Positive values
+
+Expected: NPS and %Positive should be consistent between SLAP and FK main app.
+Actual: SLAP shows systematically lower NPS and %Positive than the FK app.
+        Difference is ~15-20% across all products tested.
+
+Reproducibility: 100% — consistent across all product pages tested (10+ products).
+
+Impact:
+Users see lower quality signals on SLAP than on FK, making SLAP look like it has
+worse products. Incorrect NPS affects recommendation quality and ranking logic.
+This is a data science / product page analytics issue, not a UI bug.
+
+Environment:
+- Platform: Android, iOS, Web (all affected — server-side data issue)
+- App Version: 2.4.1
+- Module: Product Page / NPS / %Positive analytics (DS team)
+
+Thanks,
+Panyam Goutham Sai
+Data Science, SLAP

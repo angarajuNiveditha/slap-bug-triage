@@ -1,0 +1,45 @@
+From: sukhvinder.kaur@flipkart.com
+To: slap-bugs@flipkart.com
+Subject: iOS cold start — login screen flashes twice before landing on home, broken animation
+
+Hi Team,
+
+On iOS, there is a visual bug during cold start of the SLAP app. When a user
+opens the app from a completely closed state (cold start), the login screen
+flashes briefly on screen for approximately 300ms before the app correctly
+transitions to the home screen for already-authenticated users.
+
+This is a React Native / iOS rendering timing issue. The navigation stack is
+initialising before the auth token check completes, causing the login screen
+to flash. The animation also looks broken — it jumps rather than sliding.
+
+Steps to Reproduce:
+1. Log in to SLAP on iOS (v2.4.1)
+2. Force-close the app completely (swipe up from app switcher)
+3. Wait 30 seconds (ensure a cold start)
+4. Re-open SLAP by tapping the icon
+5. Observe the screen during app launch
+
+Expected: App opens directly to the home screen with a smooth slide-in animation.
+          Login screen should not be visible at any point for authenticated users.
+Actual: Login screen flashes for ~300ms before home screen appears.
+        Screen jump/flicker instead of smooth animation. Looks unprofessional.
+
+Reproducibility: 100% on iOS cold start. Does not happen on warm start.
+
+Impact:
+Visually jarring for all iOS users on every cold start. Affects first impression
+and perceived app quality. May confuse users into thinking they've been logged out.
+This is a UI / React Native rendering bug — no data is lost.
+
+Environment:
+- Platform: iOS (v2.4.1)
+- Devices: iPhone 14, iPhone 15 Pro, iPhone 13 mini (all affected)
+- Cold start only — warm start is fine
+- React Native navigation stack issue (not a backend issue)
+
+Screenshot attached: ios_cold_start_flash.mp4
+
+Regards,
+Sukhvinder Kaur
+UI Engineering, SLAP
