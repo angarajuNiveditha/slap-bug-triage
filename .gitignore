@@ -21,3 +21,7 @@ venv/
 
 # sentence-transformers model cache
 .cache/
+
+# SLAP design references (Figma-exported PNGs) — kept local-only;
+# they are unreleased product designs. SLAP_KNOWLEDGE.md is OK to commit.
+slap_context/reference_screens/
