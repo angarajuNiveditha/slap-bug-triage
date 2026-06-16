@@ -25,3 +25,12 @@ venv/
 # SLAP design references (Figma-exported PNGs) — kept local-only;
 # they are unreleased product designs. SLAP_KNOWLEDGE.md is OK to commit.
 slap_context/reference_screens/
+
+# Bug attachment images — gitignored because the demo copies them
+# from slap_context (unreleased designs). The email.txt files inside
+# data/bug_with_media/ ARE committed; only the PNGs stay local.
+data/bug_with_media/**/*.png
+data/bug_with_media/**/*.jpg
+data/bug_with_media/**/*.jpeg
+data/bug_with_media/**/*.webp
+data/bug_with_media/**/*.gif

@@ -23,11 +23,8 @@ load_dotenv()
 # Make `src` importable when running this file directly
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.agent_ticket_builder import build_ticket           # noqa: E402
-from src.claude_parser     import parse_bug_report          # noqa: E402
-from src.claude_scorer     import score_severity            # noqa: E402
-from src.claude_similarity import SimilarityEngine          # noqa: E402
-from src.jira_client       import JiraClient                # noqa: E402
+from src.agents.host_agent import HostAgent                 # noqa: E402
+from src.jira_client        import JiraClient               # noqa: E402
 
 TESTS_DIR = Path(__file__).resolve().parent
 
@@ -39,16 +36,16 @@ def main() -> None:
         sys.exit(1)
 
     print(f"Found {len(txt_files)} test .txt files")
-    print("Each test makes 3 Claude calls (parse + similarity + score).")
-    print("Estimated total: 10-15 minutes.\n")
+    print("Each test runs the multi-agent pipeline (4 Claude calls).")
+    print("Estimated total: 15-25 minutes.\n")
 
     # ─── Build the Jira index once ───────────────────────────────────────
     print("[setup] Fetching 300 historical FLIPPI bugs...")
     jira   = JiraClient()
     issues = jira.fetch_recent_bugs(limit=300)
-    print("[setup] Caching for Claude similarity prompts...")
-    engine = SimilarityEngine()
-    engine.build_index(issues)
+    print("[setup] Building host-agent embeddings index...")
+    host = HostAgent()
+    host.build_index(issues)
 
     # ─── Process each test ───────────────────────────────────────────────
     successes: list[str] = []
@@ -59,20 +56,18 @@ def main() -> None:
         print(f"\n[{idx}/{len(txt_files)}] {rel}")
         t0 = time.time()
         try:
-            raw   = txt_path.read_text(encoding="utf-8")
-            bug   = parse_bug_report(raw)
-            sim   = engine.find_similar(bug)
-            sev   = score_severity(bug, sim.top_matches)
-            draft = build_ticket(bug, sev, sim)
+            raw    = txt_path.read_text(encoding="utf-8")
+            result = host.triage(raw)
+            triage = result.draft.triage_notes
 
             out_path = txt_path.with_name(txt_path.stem + "_claude.json")
             out_path.write_text(
-                json.dumps(draft.triage_notes, indent=2, ensure_ascii=False) + "\n",
+                json.dumps(triage, indent=2, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
             dt = time.time() - t0
             print(f"  ✓ {out_path.name}  ({dt:.1f}s)  "
-                  f"→ {sev.priority} / team={draft.triage_notes.get('team')}")
+                  f"→ {result.severity.priority} / team={triage.get('team')}")
             successes.append(rel)
         except Exception as e:
             dt = time.time() - t0
