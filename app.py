@@ -1,20 +1,25 @@
 """
-app.py — Streamlit frontend for the SLAP Bug Triage prototype.
+app.py — Streamlit front-end for the SLAP Bug Triage prototype.
 
-Paste a bug report email, pick a pipeline (rule-based or Claude), and the
-agent produces a Jira ticket draft. No tickets are filed automatically.
+Paste a bug report, optionally attach screenshots, pick a pipeline, and the
+agent drafts a Jira ticket. No tickets are filed automatically.
+
+Pipelines:
+  • Multi-agent (Astral)   — Claude Code headless, sub-agents for media,
+    parser, embeddings, dedup, triage. Accepts image attachments.
+  • Rule-based             — fast, deterministic, text-only (no Claude).
 
 Run:
     streamlit run app.py
-
-Opens at http://localhost:8501.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
+from typing import Optional
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -25,15 +30,14 @@ load_dotenv()
 from src.agent_ticket_builder import build_ticket
 from src.jira_client          import JiraClient
 
-# Rule-based pipeline (instant)
-from src.agent_parser      import parse_bug_report as rb_parse
-from src.agent_scorer      import score_severity   as rb_score
-from src.tfidf_similarity  import SimilarityEngine as RuleEngine
+# Rule-based pipeline (instant, text-only)
+from src.agent_parser     import parse_bug_report as rb_parse
+from src.agent_scorer     import score_severity   as rb_score
+from src.tfidf_similarity import SimilarityEngine as RuleEngine
 
-# Claude pipeline (semantic, ~90s per call)
-from src.claude_parser     import parse_bug_report as cl_parse
-from src.claude_scorer     import score_severity   as cl_score
-from src.claude_similarity import SimilarityEngine as ClaudeEngine
+# Multi-agent pipeline (Claude Code headless, supports media)
+from src.agents.host_agent      import HostAgent
+from src.agents.subagent_media  import IMAGE_EXTENSIONS
 
 JIRA_BASE_URL = os.environ.get("JIRA_BASE_URL", "https://flipkart.atlassian.net")
 DATA_DIR      = Path(__file__).parent / "data"
@@ -51,21 +55,27 @@ st.set_page_config(
 # ── Cached resources ────────────────────────────────────────────────────────
 
 @st.cache_resource(show_spinner="Connecting to Jira and indexing 300 historical bugs (one-time per session)...")
-def get_engines() -> tuple[RuleEngine, ClaudeEngine, int]:
-    """Build both similarity engines once and reuse across all triage calls."""
+def get_engines() -> tuple[RuleEngine, HostAgent, int]:
+    """Build both pipelines' indexes once and reuse across triage calls."""
     jira   = JiraClient()
     issues = jira.fetch_recent_bugs(limit=300)
 
     rb = RuleEngine()
     rb.build_index(issues)
 
-    cl = ClaudeEngine()
-    cl.build_index(issues)
+    host = HostAgent()
+    host.build_index(issues)
 
-    return rb, cl, len(issues)
+    return rb, host, len(issues)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
+
+def jira_link(key: Optional[str]) -> str:
+    if not key:
+        return "—"
+    return f"[{key}]({JIRA_BASE_URL}/browse/{key})"
+
 
 def render_triage_md(triage: dict) -> str:
     """Render the triage_notes dict as a clickable-link Markdown document."""
@@ -80,6 +90,7 @@ def render_triage_md(triage: dict) -> str:
     dup_key        = triage.get("duplicate_of")
     dup_conf       = triage.get("duplicate_confidence", 0.0)
     justification  = triage.get("severity_justification", "")
+    pipeline       = triage.get("pipeline", "—")
 
     dup_cell = (
         f"[{dup_key}]({JIRA_BASE_URL}/browse/{dup_key}) (confidence {dup_conf:.2f})"
@@ -90,6 +101,7 @@ def render_triage_md(triage: dict) -> str:
     lines += [
         "| Field | Value |",
         "|---|---|",
+        f"| **Pipeline** | `{pipeline}` |",
         f"| **Team** | {team} |",
         f"| **Jira component** | {component} |",
         f"| **Scoring layer** | `{layer}` |",
@@ -99,9 +111,29 @@ def render_triage_md(triage: dict) -> str:
         f"| **Owner reason** | {owner_reason} |",
         "",
     ]
-
     if justification:
         lines += ["### Severity Justification", "", f"> {justification}", ""]
+
+    findings = triage.get("media_findings") or []
+    if findings:
+        lines += ["### Media Findings (from attached images)", ""]
+        for f in findings:
+            screen = f.get("screen", "?")
+            state  = f.get("state", "?")
+            sig    = f.get("triage_signals", {}) or {}
+            lines += [
+                f"**{Path(f.get('image_path','')).name}** — screen: *{screen}*, state: *{state}*",
+                "",
+                f"> {f.get('one_line_summary','')}",
+                "",
+            ]
+            if f.get("ui_anomalies"):
+                lines.append("Anomalies:")
+                for a in f["ui_anomalies"]:
+                    lines.append(f"- {a}")
+                lines.append("")
+            if sig.get("contradicts_email_claim"):
+                lines += [f"⚠ Contradicts email: {sig['contradicts_email_claim']}", ""]
 
     similar = triage.get("similar_bugs") or []
     if similar:
@@ -124,15 +156,27 @@ def render_triage_md(triage: dict) -> str:
     note = triage.get("note")
     if note:
         lines += ["---", "", f"_{note}_", ""]
-
     return "\n".join(lines)
 
 
-def jira_link(key: str | None) -> str:
-    """Return a markdown link for a Jira key, or '—'."""
-    if not key:
-        return "—"
-    return f"[{key}]({JIRA_BASE_URL}/browse/{key})"
+def save_uploads_to_tmp(uploaded_files) -> list:
+    """
+    Streamlit gives us in-memory UploadedFile objects. The media sub-agent
+    needs file paths on disk so Claude can Read them. Stage to a tempdir.
+    Returns the list of saved absolute paths.
+    """
+    if not uploaded_files:
+        return []
+    tmp_dir = Path(tempfile.mkdtemp(prefix="slap_attachments_"))
+    saved = []
+    for f in uploaded_files:
+        ext = Path(f.name).suffix.lower()
+        if ext not in IMAGE_EXTENSIONS:
+            continue
+        path = tmp_dir / f.name
+        path.write_bytes(f.getvalue())
+        saved.append(str(path))
+    return saved
 
 
 # ── Sidebar ─────────────────────────────────────────────────────────────────
@@ -140,37 +184,43 @@ def jira_link(key: str | None) -> str:
 with st.sidebar:
     st.markdown("### About")
     st.markdown(
-        "SLAP Bug Triage is a prototype that takes a raw bug report email "
+        "SLAP Bug Triage takes a bug-report email (plus optional screenshots) "
         "and drafts a Jira ticket — with priority, team routing, duplicate "
         "detection, and owner suggestion."
     )
-    st.markdown(
-        "**No tickets are filed automatically.** A human reviews the draft "
-        "and files the ticket themselves."
-    )
+    st.markdown("**No tickets are filed automatically.** A human reviews and files.")
+
     st.divider()
     st.markdown("### Pipelines")
     st.markdown(
-        "- **Rule-based** uses regex parsing + TF-IDF similarity + keyword "
-        "scoring. Instant, fully deterministic.\n"
-        "- **Claude** uses Claude Code (no API key) for parsing, semantic "
-        "similarity over all 300 historical bugs, and severity reasoning. "
-        "Slower (~90s per bug) but understands paraphrases and intent."
+        "- **Multi-agent (Astral)** — Claude Code headless. Sub-agents for "
+        "media, parser, embeddings, dedup, triage. Reads images. ~90–150 s/bug.\n"
+        "- **Rule-based** — regex + TF-IDF, instant, text-only. Fallback / simulation."
+    )
+
+    st.divider()
+    st.markdown("### Sub-agents (multi-agent)")
+    st.markdown(
+        "1. **Media** — images → SLAP-aware findings (skipped if no attachments)\n"
+        "2. **Parser** — email + media → structured BugReport\n"
+        "3. **Embeddings** — top-5 similar bugs from 300 historical FLIPPI bugs\n"
+        "4. **Dedup** — duplicate decision (≥ 0.80 confidence)\n"
+        "5. **Triage** — priority P0/P1/P2/P3 + justification"
     )
 
 
 # ── Header ──────────────────────────────────────────────────────────────────
 
 st.title("🐞 SLAP Bug Triage")
-st.caption("Paste a bug report email. The agent drafts a Jira ticket. You review and file it.")
+st.caption("Paste the report. Attach screenshots if you have them. The agent drafts the ticket.")
 
 
 # ── Input ───────────────────────────────────────────────────────────────────
 
 st.subheader("1. Bug report")
 
-samples = sorted(DATA_DIR.glob("*.txt")) if DATA_DIR.exists() else []
-sample_names = ["(paste your own)"] + [p.name for p in samples]
+samples       = sorted(DATA_DIR.glob("*.txt")) if DATA_DIR.exists() else []
+sample_names  = ["(paste your own)"] + [p.name for p in samples]
 
 col_pick, col_pipeline = st.columns([2, 2])
 
@@ -183,19 +233,35 @@ with col_pick:
 with col_pipeline:
     pipeline_choice = st.radio(
         "Pipeline",
-        ["Rule-based (instant)", "Claude (semantic, ~90s)"],
+        ["Multi-agent (semantic, accepts images)", "Rule-based (instant, text-only)"],
         horizontal=False,
         index=0,
-        help="Rule-based is fast and deterministic. Claude is slower but reads semantically.",
+        help=(
+            "Multi-agent reads images and reasons semantically (~90–150 s). "
+            "Rule-based is instant but ignores attachments."
+        ),
     )
 
 raw_text = st.text_area(
     "Bug report email",
     value=default_text,
-    height=320,
+    height=280,
     placeholder="From: someone@flipkart.com\nSubject: [URGENT] ...\n\nDescribe the bug here...",
-    key=f"input_{pick}",  # reset textarea when sample changes
+    key=f"input_{pick}",
 )
+
+uploaded_files = st.file_uploader(
+    "Attach screenshots (optional — multi-agent only)",
+    type=["png", "jpg", "jpeg", "webp", "gif"],
+    accept_multiple_files=True,
+    help="Images are sent to the media sub-agent, which identifies the SLAP screen and extracts visible bug evidence.",
+)
+
+if uploaded_files:
+    cols = st.columns(min(4, len(uploaded_files)))
+    for i, f in enumerate(uploaded_files):
+        with cols[i % len(cols)]:
+            st.image(f.getvalue(), caption=f.name, use_container_width=True)
 
 triage_btn = st.button(
     "Triage this bug",
@@ -204,41 +270,57 @@ triage_btn = st.button(
     use_container_width=True,
 )
 
+if uploaded_files and pipeline_choice.startswith("Rule-based"):
+    st.info("Heads up: rule-based pipeline ignores image attachments. Switch to multi-agent to use them.")
+
 st.divider()
 
 
 # ── Pipeline run ────────────────────────────────────────────────────────────
 
 if triage_btn:
-    use_claude = pipeline_choice.startswith("Claude")
+    use_multi_agent = pipeline_choice.startswith("Multi-agent")
 
     try:
-        rb_engine, cl_engine, n_indexed = get_engines()
+        rb_engine, host, n_indexed = get_engines()
     except Exception as e:
         st.error(f"Could not connect to Jira: {type(e).__name__}: {e}")
         st.stop()
 
-    with st.status(f"Running {'Claude' if use_claude else 'rule-based'} pipeline...", expanded=True) as status:
+    pipeline_label = "multi-agent" if use_multi_agent else "rule-based"
+    with st.status(f"Running {pipeline_label} pipeline...", expanded=True) as status:
         try:
-            st.write("**Step 1** — Parsing bug report...")
-            bug = (cl_parse if use_claude else rb_parse)(raw_text)
-            st.write(f"  → Title: `{bug.title}`")
-            st.write(f"  → Platform: {bug.platform}  |  Version: {bug.app_version or '?'}  |  Repro: {bug.reproducibility}")
+            if use_multi_agent:
+                image_paths = save_uploads_to_tmp(uploaded_files) if uploaded_files else []
 
-            st.write(f"**Step 2** — Finding similar bugs across {n_indexed} historical FLIPPI bugs...")
-            if use_claude:
-                sim = cl_engine.find_similar(bug)
+                if image_paths:
+                    st.write(f"**Step 1** — Media sub-agent processing {len(image_paths)} image(s)...")
+                else:
+                    st.write("**Step 1** — No attachments; skipping media sub-agent.")
+
+                st.write("**Step 2** — Parser sub-agent (email → BugReport)...")
+                st.write(f"**Step 3** — Embeddings sub-agent ranking similar bugs across {n_indexed} historical bugs...")
+                st.write("**Step 4** — Dedup sub-agent deciding duplicate...")
+                st.write("**Step 5** — Triage sub-agent assigning priority...")
+                st.write("**Step 6** — Building Jira ticket draft...")
+
+                result   = host.triage(raw_text, image_paths=image_paths)
+                bug      = result.bug
+                sim      = result.similarity
+                severity = result.severity
+                draft    = result.draft
+                media    = result.media
             else:
+                st.write("**Step 1** — Parsing (regex)...")
+                bug = rb_parse(raw_text)
+                st.write(f"**Step 2** — TF-IDF similarity over {n_indexed} historical bugs...")
                 query = f"{bug.title}\n{bug.description}\n{bug.actual_result}"
                 sim   = rb_engine.find_similar(query)
-            st.write(f"  → {len(sim.top_matches)} match(es) returned")
-
-            st.write("**Step 3** — Scoring severity...")
-            severity = (cl_score if use_claude else rb_score)(bug, sim.top_matches)
-            st.write(f"  → Priority: **{severity.priority}** ({severity.severity})")
-
-            st.write("**Step 4** — Building Jira ticket draft...")
-            draft = build_ticket(bug, severity, sim)
+                st.write("**Step 3** — Multi-layer keyword/template scorer...")
+                severity = rb_score(bug, sim.top_matches)
+                st.write("**Step 4** — Building Jira ticket draft...")
+                draft = build_ticket(bug, severity, sim)
+                media = None
 
             status.update(label="Triage complete", state="complete", expanded=False)
         except Exception as e:
@@ -257,22 +339,26 @@ if triage_btn:
     m4.metric("Duplicate of", sim.duplicate_of or "—",
               f"{sim.duplicate_confidence:.0%} confidence" if sim.duplicate_of else None)
 
-    # Clickable Jira link for the duplicate (metric tiles don't render links)
     if sim.duplicate_of:
-        st.markdown(f"🔗 Open duplicate: {jira_link(sim.duplicate_of)}", unsafe_allow_html=False)
+        st.markdown(f"🔗 Open duplicate: {jira_link(sim.duplicate_of)}")
 
     # ── Tabs ────────────────────────────────────────────────────────────────
 
-    t_summary, t_notes, t_json, t_adf = st.tabs(
-        ["Summary", "Triage notes", "Raw JSON", "Jira ADF preview"]
-    )
+    tab_names = ["Summary", "Triage notes", "Raw JSON", "Jira ADF preview"]
+    if use_multi_agent and media and media.findings:
+        tab_names.insert(1, "Media findings")
+    tabs = st.tabs(tab_names)
 
-    with t_summary:
+    idx = 0
+    with tabs[idx]:
         st.markdown(f"**Justification.** {severity.justification}")
         st.markdown(f"**Scoring path.** `{severity.scoring_path}`")
         if sim.suggested_owner:
             st.markdown(f"**Owner reason.** {sim.owner_reason}")
-        st.markdown(f"**Pipeline.** `{'claude-code-headless' if use_claude else 'agent (rule-based)'}`")
+        st.markdown(f"**Pipeline.** `{draft.triage_notes.get('pipeline', pipeline_label)}`")
+
+        if media and media.combined_summary:
+            st.markdown(f"**Media summary.** {media.combined_summary}")
 
         if sim.top_matches:
             st.markdown("**Top similar bugs:**")
@@ -282,11 +368,47 @@ if triage_btn:
                     f"- {jira_link(m.key)} ({m.priority}, sim={m.similarity:.2f}) — "
                     f"{m.summary}{tag}"
                 )
+    idx += 1
 
-    with t_notes:
+    if use_multi_agent and media and media.findings:
+        with tabs[idx]:
+            st.caption("What the media sub-agent saw in each attached image.")
+            for f in media.findings:
+                st.markdown(f"#### {Path(f.image_path).name}")
+                left, right = st.columns([1, 2])
+                with left:
+                    if Path(f.image_path).exists():
+                        st.image(f.image_path, use_container_width=True)
+                with right:
+                    sig = f.triage_signals or {}
+                    st.markdown(f"**Screen:** {f.screen}")
+                    st.markdown(f"**State:** {f.state}")
+                    if sig:
+                        st.markdown(f"**Likely component:** {sig.get('likely_component', '?')}")
+                        st.markdown(f"**Severity hint:** {sig.get('severity_hint', '?')}")
+                        if sig.get("contradicts_email_claim"):
+                            st.warning(f"Contradicts email: {sig['contradicts_email_claim']}")
+                    st.markdown(f"**One-line summary:**  \n{f.one_line_summary}")
+                    if f.ui_anomalies:
+                        st.markdown("**Anomalies:**")
+                        for a in f.ui_anomalies:
+                            st.markdown(f"- {a}")
+                    if f.error_indicators:
+                        st.markdown("**Error indicators:**")
+                        for e in f.error_indicators:
+                            st.markdown(f"- {e}")
+                    if f.visible_text:
+                        with st.expander("Visible text extracted"):
+                            for t in f.visible_text:
+                                st.markdown(f"- {t}")
+                st.divider()
+        idx += 1
+
+    with tabs[idx]:
         st.markdown(render_triage_md(draft.triage_notes))
+    idx += 1
 
-    with t_json:
+    with tabs[idx]:
         triage_json = json.dumps(draft.triage_notes, indent=2, ensure_ascii=False)
         st.code(triage_json, language="json")
         st.download_button(
@@ -295,20 +417,25 @@ if triage_btn:
             file_name="triage_notes.json",
             mime="application/json",
         )
+    idx += 1
 
-    with t_adf:
-        st.caption("This is the Jira-flavored ADF document the ticket builder produced. "
-                   "Paste-ready into Jira's create-issue API.")
+    with tabs[idx]:
+        st.caption(
+            "ADF document the ticket builder produced. Paste-ready into Jira's "
+            "create-issue API. (Auto-create is OFF by design.)"
+        )
         st.json(draft.jira_payload, expanded=False)
         full_json = json.dumps(
-            {"pipeline": "claude-code-headless" if use_claude else "agent (rule-based)",
-             "jira_ticket_draft": draft.jira_payload,
-             "triage_notes": draft.triage_notes},
+            {
+                "pipeline":          draft.triage_notes.get("pipeline", pipeline_label),
+                "jira_ticket_draft": draft.jira_payload,
+                "triage_notes":      draft.triage_notes,
+            },
             indent=2, ensure_ascii=False,
         )
         st.download_button(
             "⬇ Download full ticket draft JSON",
             data=full_json,
-            file_name=f"ticket_draft_{'claude' if use_claude else 'rule_based'}.json",
+            file_name=f"ticket_draft_{pipeline_label.replace(' ', '_')}.json",
             mime="application/json",
         )

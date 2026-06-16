@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-from typing import Any
+from typing import Any, Optional, Sequence
 
 CLAUDE_BIN      = "claude"
 DEFAULT_TIMEOUT = 180   # seconds — large-context similarity calls can take ~30s
@@ -32,15 +32,23 @@ def call_claude(
     prompt: str,
     expect_json: bool = True,
     timeout: int = DEFAULT_TIMEOUT,
+    add_dirs: Optional[Sequence[str]] = None,
+    allowed_tools: Optional[Sequence[str]] = None,
 ) -> Any:
     """
     Run `claude -p <prompt> --output-format json` and return the result.
 
     Args:
-        prompt:       The full prompt text to send.
-        expect_json:  If True, parse Claude's response as JSON (strip code
-                      fences first). If False, return the raw text.
-        timeout:      Max seconds to wait for the subprocess.
+        prompt:        The full prompt text to send.
+        expect_json:   If True, parse Claude's response as JSON (strip code
+                       fences first). If False, return the raw text.
+        timeout:       Max seconds to wait for the subprocess.
+        add_dirs:      Optional list of directories to expose to Claude via
+                       --add-dir (required for the media sub-agent so the
+                       Read tool can load image attachments).
+        allowed_tools: Optional list of tools to allow (e.g. ["Read"] when
+                       processing images). When omitted Claude uses its
+                       default allow-list.
 
     Returns:
         Parsed JSON object (dict/list) when expect_json=True, else str.
@@ -48,9 +56,16 @@ def call_claude(
     Raises:
         ClaudeCallError when the subprocess fails or output is unparseable.
     """
+    cmd: list[str] = [CLAUDE_BIN, "-p", prompt, "--output-format", "json"]
+    if add_dirs:
+        for d in add_dirs:
+            cmd.extend(["--add-dir", d])
+    if allowed_tools:
+        cmd.extend(["--allowedTools", ",".join(allowed_tools)])
+
     try:
         proc = subprocess.run(
-            [CLAUDE_BIN, "-p", prompt, "--output-format", "json"],
+            cmd,
             capture_output=True,
             text=True,
             check=True,

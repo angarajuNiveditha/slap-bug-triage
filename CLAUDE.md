@@ -9,11 +9,11 @@ finds duplicates, suggests an owner, scores severity, and outputs a
 dev-ready Jira ticket draft as JSON.
 
 **Three pipelines exist:**
-- `run_agent.py` — **fully working today**, no Anthropic API key needed. Uses rule-based parsing, TF-IDF similarity, and multi-layer scoring. ~35 ms per bug.
-- `run_claude_agent.py` — **also fully working today**, no API key needed. Uses Claude Code in headless mode (`claude -p`) for all three stages (parse, semantic similarity over 300 bugs, severity reasoning). Authenticates via the local Claude Code session. ~50–90 s per bug.
-- `main.py` — original design using the Anthropic Python SDK. Blocked until `ANTHROPIC_API_KEY` is provided; kept for reference / production swap.
+- `run_multi_agent.py` — **primary**. Multi-agent (Astral host + 5 sub-agents: media, parser, embeddings, dedup, triage) running on Claude Code headless mode (`claude -p`). Accepts image attachments. No `ANTHROPIC_API_KEY` required. ~90–150 s per bug.
+- `run_agent.py` — local simulation harness, fully rule-based (regex + TF-IDF + multi-layer keyword scorer). ~35 ms per bug. Text-only. Used for fast iteration and as a deterministic baseline.
+- `main.py` — original Anthropic SDK design. Blocked on `ANTHROPIC_API_KEY`; kept as production-shape reference.
 
-**Front-end:** `app.py` is a Streamlit UI that wraps both working pipelines with a side-by-side toggle. Run with `streamlit run app.py` → `localhost:8501`.
+**Front-end:** `app.py` is a Streamlit UI with a pipeline toggle and an `st.file_uploader` for image attachments. The multi-agent pipeline reads attached screenshots via the media sub-agent. Run with `streamlit run app.py` → `localhost:8501`.
 
 **This is a prototype only. It never writes to Jira. All Jira access is read-only.**
 
@@ -23,35 +23,49 @@ dev-ready Jira ticket draft as JSON.
 
 ```
 slap-bug-triage/
-├── app.py                    # Streamlit UI — runs either pipeline with a toggle
-├── run_agent.py              # Rule-based pipeline (no API key)
-├── run_claude_agent.py       # Claude Code headless pipeline (no API key)
+├── app.py                    # Streamlit UI — pipeline toggle + image uploader
+├── run_multi_agent.py        # PRIMARY: multi-agent pipeline (Claude, no API key)
+├── run_agent.py              # Local simulation harness: rule-based (no API key)
 ├── main.py                   # Anthropic SDK pipeline (needs ANTHROPIC_API_KEY) — blocked
-├── TRIAGE_LOGIC.md           # PM-style report of the triage logic, for mentor review
+├── TRIAGE_LOGIC.md           # PM-style report on rule-based logic
+├── CLAUDE_PIPELINE_REPORT.md # PM-style report on the Claude pipeline
+│
+├── slap_context/                  # SLAP domain knowledge for the media sub-agent
+│   ├── SLAP_KNOWLEDGE.md          # screen catalog, vocabulary, visual triage cues
+│   └── reference_screens/         # labeled Figma exports (gitignored — design IP)
 │
 ├── src/
 │   │
-│   │  ── Rule-based pipeline (run_agent.py) ──
-│   ├── agent_parser.py        # email → BugReport via regex + heuristics
-│   ├── agent_scorer.py        # multi-layer priority scorer
-│   ├── tfidf_similarity.py    # TF-IDF cosine similarity (scikit-learn)
-│   ├── agent_ticket_builder.py # ADF ticket builder (shared by Claude pipeline too)
+│   │  ── Multi-agent pipeline (run_multi_agent.py uses these) ──
+│   ├── agents/
+│   │   ├── host_agent.py            # Astral — coordinates sub-agents
+│   │   ├── subagent_media.py        # images → SLAP-aware findings
+│   │   ├── subagent_parser.py       # email + media → BugReport
+│   │   ├── subagent_embeddings.py   # rank top-K similar past bugs
+│   │   ├── subagent_dedup.py        # final duplicate decision (≥ 0.80 conf)
+│   │   └── subagent_triage.py       # priority / severity assignment
+│   ├── claude_cli.py            # subprocess wrapper around `claude -p`
 │   │
-│   │  ── Claude Code headless pipeline (run_claude_agent.py) ──
-│   ├── claude_cli.py          # subprocess wrapper around `claude -p`
-│   ├── claude_parser.py       # email → BugReport via Claude
-│   ├── claude_similarity.py   # 300 bugs + new bug → similar bugs (replaces TF-IDF)
-│   ├── claude_scorer.py       # bug + similar → SeverityResult via Claude
+│   │  ── Rule-based simulation harness (run_agent.py uses these) ──
+│   ├── agent_parser.py          # email → BugReport via regex + heuristics
+│   ├── agent_scorer.py          # multi-layer priority scorer
+│   ├── tfidf_similarity.py      # TF-IDF cosine similarity (scikit-learn)
+│   │
+│   │  ── Shared (used by both Claude and rule-based) ──
+│   ├── agent_ticket_builder.py  # ADF ticket builder
+│   ├── jira_client.py           # read-only Jira REST v3 wrapper
 │   │
 │   │  ── Anthropic SDK pipeline (main.py — blocked) ──
-│   ├── parser.py              # Anthropic SDK → BugReport
-│   ├── severity_scorer.py     # Anthropic SDK → SeverityResult
-│   ├── similarity.py          # sentence-transformers similarity engine
-│   ├── ticket_builder.py      # ADF ticket builder (original)
-│   │
-│   └── jira_client.py         # Shared: read-only Jira REST v3 wrapper
+│   ├── parser.py                # Anthropic SDK → BugReport
+│   ├── severity_scorer.py       # Anthropic SDK → SeverityResult
+│   ├── similarity.py            # sentence-transformers similarity engine
+│   └── ticket_builder.py        # ADF ticket builder (original)
 │
 ├── data/                      # Input bug report emails (.txt files)
+│   ├── bug_with_media/                     # multi-modal test bugs (folders)
+│   │   ├── bug_m01_checkout_crash_screenshot/   # email.txt + screenshot1.png
+│   │   ├── bug_m02_vton_wrong_persona/          # VTON gender mismatch
+│   │   └── bug_m03_cart_empty_price/            # vague email + cart screenshot
 │   ├── bug_report.txt                     # original sample (cart freeze)
 │   ├── bug_01_p0_checkout_crash.txt       # P0: checkout crash, all Android users
 │   ├── bug_02_p1_search_wrong_results.txt # P1: AI ignores price constraints
@@ -88,24 +102,25 @@ slap-bug-triage/
 # Install dependencies (first time only)
 pip3 install -r requirements.txt
 
-# ── Rule-based pipeline (fast, deterministic, no API key) ─────────────────
-python3 run_agent.py                                       # all data/*.txt
-python3 run_agent.py data/bug_01_p0_checkout_crash.txt     # specific file
+# ── Multi-agent pipeline (PRIMARY — Claude, no API key) ──────────────────
+# Requires the Claude Code CLI installed and logged in on this machine.
+python3 run_multi_agent.py                                  # all text bugs + bug_with_media/* folders
+python3 run_multi_agent.py data/bug_01_p0_checkout_crash.txt
+python3 run_multi_agent.py data/bug_with_media/bug_m01_checkout_crash_screenshot
+# Output → output_claude/ticket_<label>_<timestamp>.json
+
+# ── Rule-based simulation harness (fast, deterministic, no API key) ──────
+python3 run_agent.py                                        # all data/*.txt
+python3 run_agent.py data/bug_01_p0_checkout_crash.txt
 # Output → output/ticket_<stem>_<timestamp>.json
 
-# ── Claude Code headless pipeline (semantic, no API key) ─────────────────
-# Requires the Claude Code CLI installed and logged in on this machine.
-python3 run_claude_agent.py                                # all data/*.txt (~15 min total)
-python3 run_claude_agent.py data/bug_01_p0_checkout_crash.txt
-# Output → output_claude/ticket_<stem>_<timestamp>.json
-
-# ── Streamlit front-end (both pipelines, side-by-side toggle) ────────────
+# ── Streamlit front-end (pipeline toggle + image uploader) ───────────────
 streamlit run app.py
 # Opens at http://localhost:8501. First load fetches 300 Jira bugs (~5s).
 
 # ── Regenerate the tests/ folder for mentor review ───────────────────────
 python3 tests/_build.py        # rule-based triage_notes → tests/test N/*.json
-python3 tests/_run_claude.py   # Claude triage_notes → tests/test N/*_claude.json
+python3 tests/_run_claude.py   # multi-agent triage_notes → tests/test N/*_claude.json
 ```
 
 ---
@@ -268,56 +283,85 @@ and signal decided the priority. Useful for debugging and tuning.
 
 ---
 
-## Claude Code headless pipeline (run_claude_agent.py)
+## Multi-agent pipeline (run_multi_agent.py)
 
-Same 8-step shape as `run_agent.py`, but the three "intelligence" stages are
-replaced by Claude Code calls (`claude -p`) instead of rule-based code:
+A host agent (Astral, `src/agents/host_agent.py`) coordinates five sub-agents.
+Each sub-agent is a focused Claude prompt with one responsibility. The
+host calls them in this order:
 
-| Stage | Rule-based module | Claude Code module |
-|---|---|---|
-| Parse email → BugReport | `agent_parser.py` (regex) | `claude_parser.py` |
-| Find similar past bugs | `tfidf_similarity.py` (TF-IDF cosine) | `claude_similarity.py` |
-| Score severity | `agent_scorer.py` (multi-layer) | `claude_scorer.py` |
+```
+bug input (email + optional images)
+    │
+    ▼
+[1] subagent_media        — only if attachments present
+    │     ↳ one-line summary folded into the email body
+    ▼
+[2] subagent_parser       — email + media findings → BugReport
+    │
+    ▼
+[3] subagent_embeddings   — 300 historical Jira bugs + new bug → top-K ranked
+    │                       candidates + suggested owner
+    ▼
+[4] subagent_dedup        — focused dup/no-dup decision over the top-K
+    │                       (only fires if confidence ≥ 0.80)
+    ▼
+[5] subagent_triage       — BugReport + similar bugs → SeverityResult
+    │
+    ▼
+agent_ticket_builder      — assembles Jira ADF + triage_notes JSON
+```
 
-`jira_client.py` and `agent_ticket_builder.py` are reused unchanged. The
-outputs land in `output_claude/` (gitignored) with the same JSON shape as
-`output/`, except `pipeline` is `"claude-code-headless"`.
+### Media sub-agent (images)
 
-### How the headless mode works
+`src/agents/subagent_media.py`. Loads `slap_context/SLAP_KNOWLEDGE.md` and the
+labeled `slap_context/reference_screens/` PNGs, then calls `claude -p` with
+`--add-dir` so Claude can `Read` each bug attachment as a multimodal input.
+Per image it returns: screen label, state, visible text, UI anomalies,
+device hints, triage signals (likely component + severity hint +
+*contradicts_email_claim*), and a one-line summary.
 
-`src/claude_cli.py` wraps `subprocess.run(["claude", "-p", prompt, "--output-format", "json"])`:
+The combined summary is folded into the email body before the parser runs, so
+every downstream stage sees the visual evidence without handling images itself.
 
-1. Spawns the `claude` CLI in non-interactive mode (no API key required —
-   uses the local Claude Code session's authentication).
-2. Parses the JSON envelope, extracts the `result` field.
-3. Strips ```` ```json … ``` ```` fences (Claude often wraps JSON answers in
-   markdown).
-4. Parses the inner JSON and returns it to the caller.
+### Why split embeddings and dedup
 
-Each subprocess call is independent — no shared session state across stages.
+The production diagram has them as separate sub-agents. The split makes the
+duplicate decision independently auditable (you can see Claude's dedup
+reasoning in `triage_notes.duplicate_reasoning`) and lets us tune the
+0.80 confidence threshold without touching the ranking step.
 
-### Why Claude similarity beats TF-IDF on hard cases
+### How Claude Code headless mode works
 
-The Claude similarity engine sends **all 300 historical bugs** as context
-(~30k tokens) on every query, then asks Claude to rank them. This is slow
-(~30–60s per query) but **semantically aware** in ways TF-IDF is not.
+`src/claude_cli.py` wraps
+`subprocess.run(["claude", "-p", prompt, "--output-format", "json"])`. The
+wrapper now supports `add_dirs=[...]` (for granting Read access to image
+attachments) and `allowed_tools=[...]`. No `ANTHROPIC_API_KEY` is needed —
+the CLI uses the local Claude Code session's authentication.
+
+### Why this beats lexical similarity on hard cases
 
 Example: `bug_01_p0_checkout_crash` (Android, "Proceed to Pay" crash):
-- **TF-IDF top match**: FLIPPI-1663 *Checkout Page Price Discrepancy* (sim 0.18) — matched on the word "checkout."
-- **Claude top match**: FLIPPI-1198 *[iOS] App crashing on "continue to payment"* (sim 0.85, flagged duplicate) — matched on the failure mode (crash on the pay button), and made the iOS↔Android parallel TF-IDF couldn't.
+- **TF-IDF top match**: FLIPPI-1663 *Checkout Page Price Discrepancy*
+  (sim 0.18) — matched on the word "checkout."
+- **Multi-agent top match**: FLIPPI-1198 *[iOS] App crashing on "continue
+  to payment"* (sim 0.85, flagged duplicate) — matched on the failure mode,
+  spotting the iOS↔Android parallel.
 
-Trade-off summary:
+Example: `bug_m03_cart_empty_price` (vague email "checkout is broken" +
+cart-full-view screenshot). The media sub-agent identifies the cart screen,
+notices currency-symbol rendering anomalies the email never mentioned, and
+routes to UI / P2 — overriding the user's incorrect "checkout" framing.
 
-| | Rule-based | Claude Code |
+### Trade-offs
+
+| | Rule-based (simulation) | Multi-agent (primary) |
 |---|---|---|
-| Per-bug latency | ~35 ms | ~50–90 s |
-| Cost | $0 (local CPU) | ~$0.15 (Claude inference) |
-| Determinism | Yes — same input → same output | No — small variations across runs |
-| Handles paraphrases / synonyms | Only what's in the keyword/template list | Yes — reads meaning |
-| Brittle to format changes | Yes (regex-based) | No (LLM adapts) |
-
-For demos and one-shot triage: Claude. For batch automated runs: rule-based.
-The Streamlit UI lets you toggle between them on the same bug.
+| Per-bug latency | ~35 ms | ~90–150 s |
+| Cost | $0 (local CPU) | ~$0.20–$0.40 (Claude inference) |
+| Determinism | Yes | No — small variations across runs |
+| Reads images / audio / video | No | Images today; audio/video planned |
+| Handles paraphrases / synonyms | Only what's in the keyword/template list | Yes |
+| Brittle to format changes | Yes (regex) | No (LLM adapts) |
 
 ---
 
@@ -432,20 +476,22 @@ this machine (`which claude` should return a path).
 
 ---
 
-## Current status (as of 2026-06-15)
+## Current status (as of 2026-06-16)
 
-- `run_agent.py` fully working end-to-end (rule-based, ~35 ms/bug)
-- `run_claude_agent.py` fully working end-to-end (Claude Code headless,
-  ~50–90 s/bug, no API key required)
-- `app.py` Streamlit UI with pipeline toggle, clickable Jira links, and
-  4-tab result view (Summary / Triage notes / Raw JSON / Jira ADF)
+- `run_multi_agent.py` fully working end-to-end with Astral host + 5 sub-agents
+  (media, parser, embeddings, dedup, triage), ~90–150 s/bug, no API key required
+- `run_agent.py` rule-based simulation harness still fully working (~35 ms/bug)
+- `app.py` Streamlit UI: pipeline toggle, `st.file_uploader` for image
+  attachments, dedicated "Media findings" tab when images are present
+- `slap_context/SLAP_KNOWLEDGE.md` extracted from the SLAP-2026 Figma file
+  (393 frames, 198 unique screen names, 1117 unique strings)
+- `slap_context/reference_screens/` holds 16 labeled Figma PNGs — gitignored
+  (unreleased design IP); media sub-agent loads them at runtime via `--add-dir`
+- 3 multi-modal test bugs under `data/bug_with_media/` (PNGs gitignored;
+  email.txt files committed)
 - Jira token verified, 300 real FLIPPI bugs fetched successfully
-- 15 test bug reports covering all priority levels (P0–P3) and all 6 team components
-- Both pipelines have been run over the full 15-bug test suite; results saved
-  side-by-side under `tests/test N/` as `<name>.json` (rule-based) and
-  `<name>_claude.json` (Claude)
-- Multi-layer scorer implemented: keywords → templates → weighted voting → fallback
-- `TRIAGE_LOGIC.md` documents the rule-based logic for mentor review
+- 15 text test bugs covering all priority levels and all 6 team components
+- `TRIAGE_LOGIC.md` documents the rule-based logic
+- `CLAUDE_PIPELINE_REPORT.md` documents the Claude pipeline
 - Git repo committed and pushed to GitHub
-- `main.py` (Anthropic SDK pipeline) still blocked on `ANTHROPIC_API_KEY` —
-  kept as the production-shape reference
+- `main.py` (Anthropic SDK pipeline) still blocked on `ANTHROPIC_API_KEY`

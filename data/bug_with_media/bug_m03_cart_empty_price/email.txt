@@ -1,0 +1,12 @@
+From: vikram.rao@flipkart.com
+To: slap-bugs@flipkart.com
+Subject: Checkout is broken — please look into it
+
+Hi,
+
+Checkout doesn't work for me. I added something to my cart and now I
+can't continue. Please fix this fast.
+
+Attached a screenshot.
+
+Vikram
