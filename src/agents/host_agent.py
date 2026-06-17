@@ -65,9 +65,62 @@ class HostResult:
 VAGUE_TEXT_THRESHOLD = 350   # chars of raw email body, lower = considered vague
 _PLACEHOLDER_VALUES  = {"", "not provided.", "not provided", "unknown", "none", "n/a"}
 
+# When the email's title has one of these module tags, the attached image's
+# screen should mention one of the listed substrings (case-insensitive). If
+# none match, that's a structural contradiction even if the media sub-agent
+# missed it. Tags not listed (e.g. [SLAP], [Backend/Infra], [UI/Images]) are
+# treated as catch-all and skipped.
+_TITLE_PREFIX_EXPECTED_SCREENS: dict = {
+    "[Checkout]":   ["cart", "checkout", "payment", "pdp", "proceed"],
+    "[Cart]":       ["cart", "checkout"],
+    "[Payments]":   ["payment", "checkout"],
+    "[Auth]":       ["login", "otp", "verify", "phone", "auth"],
+    "[Chat/AI]":    ["chat", "home", "query", "result", "ask"],
+    "[Search/AI]":  ["chat", "home", "query", "result", "da", "search"],
+    "[Feed/Search]":["feed", "chat", "query", "result"],
+    "[VTON]":       ["try-on", "try on", "looks", "vton", "drape"],
+    "[Price]":      ["price", "pdp", "cart"],
+}
+
 
 def _is_placeholder(value: str) -> bool:
     return (value or "").strip().lower() in _PLACEHOLDER_VALUES
+
+
+def _structural_contradiction(bug: BugReport, finding) -> Optional[dict]:
+    """
+    Compare the bug-title's module tag against the media finding's screen
+    and flag a structural mismatch when the screen falls outside the
+    expected family for that tag. Returns a quality_issue dict or None.
+    """
+    title = (bug.title or "").strip()
+    screen = (getattr(finding, "screen", "") or "").lower()
+    if not title or not screen or screen == "unknown":
+        return None
+    for prefix, allowed in _TITLE_PREFIX_EXPECTED_SCREENS.items():
+        if title.startswith(prefix):
+            if any(s in screen for s in allowed):
+                return None
+            img_name = Path(getattr(finding, "image_path", "") or "").name or "attachment"
+            return {
+                "type":             "media_contradicts_text",
+                "severity":         "warning",
+                "image":            img_name,
+                "screen":           getattr(finding, "screen", ""),
+                "message": (
+                    f"Email is tagged {prefix} but the attached image shows the "
+                    f"'{getattr(finding, 'screen', '')}' screen — these are different "
+                    "areas of the app, so the text and the screenshot are about "
+                    "different bugs."
+                ),
+                "suggested_action": (
+                    "Please refile this bug with text and a screenshot that describe "
+                    "the SAME issue. Either correct the email to match what the image "
+                    "shows, or attach the screenshot of the bug the email actually "
+                    "describes."
+                ),
+            }
+    return None
 
 
 def detect_quality_issues(bug: BugReport, media: "MediaResult") -> list:
@@ -112,24 +165,39 @@ def detect_quality_issues(bug: BugReport, media: "MediaResult") -> list:
             ),
         })
 
-    # 2. Image / text contradictions — flagged per-image by the media sub-agent
+    # 2. Image / text contradictions — two complementary detectors:
+    #    (a) the media sub-agent's own flag (Claude's semantic judgment)
+    #    (b) a structural cross-check (bug title module tag ↔ screen family)
+    #    so we catch it either way. Dedup on (image, screen) so one mismatch
+    #    only produces one issue.
+    seen_contradictions: set = set()
     if media and media.findings:
         for f in media.findings:
-            contra = (f.triage_signals or {}).get("contradicts_email_claim")
-            if not contra:
+            structural = _structural_contradiction(bug, f)
+            contra     = (f.triage_signals or {}).get("contradicts_email_claim")
+            img_name   = Path(f.image_path).name if f.image_path else "attachment"
+            key        = (img_name, f.screen or "")
+            if key in seen_contradictions:
                 continue
-            img_name = Path(f.image_path).name if f.image_path else "attachment"
-            issues.append({
-                "type":             "media_contradicts_text",
-                "severity":         "warning",
-                "image":            img_name,
-                "screen":           f.screen,
-                "message":          f"Attachment '{img_name}' shows the '{f.screen}' screen, which contradicts the email: {contra}",
-                "suggested_action": (
-                    "Please refile with a description that matches what the screenshot actually shows, "
-                    "or attach the correct screenshot for the bug you intended to report."
-                ),
-            })
+
+            if structural:
+                issues.append(structural)
+                seen_contradictions.add(key)
+                continue
+
+            if contra:
+                issues.append({
+                    "type":             "media_contradicts_text",
+                    "severity":         "warning",
+                    "image":            img_name,
+                    "screen":           f.screen,
+                    "message":          f"Attachment '{img_name}' shows the '{f.screen}' screen, which contradicts the email: {contra}",
+                    "suggested_action": (
+                        "Please refile with a description that matches what the screenshot actually shows, "
+                        "or attach the correct screenshot for the bug you intended to report."
+                    ),
+                })
+                seen_contradictions.add(key)
 
     return issues
 
@@ -153,7 +221,9 @@ class HostAgent:
         image_paths = list(image_paths or [])
         if image_paths:
             print(f"  [host] media sub-agent processing {len(image_paths)} image(s)...")
-            media = process_attachments(image_paths)
+            # Pass the email text so the media sub-agent can compare what
+            # the reporter wrote with what the images actually show.
+            media = process_attachments(image_paths, email_text=raw_text)
         else:
             media = MediaResult(findings=[], combined_summary="")
 

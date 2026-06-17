@@ -61,6 +61,11 @@ You have access to two things via the Read tool:
 2. Labeled canonical reference screens from the SLAP Figma file. Each filename is a screen label. Browse them as needed when you need to confirm which screen an attachment shows:
      {reference_dir}/
 
+THE BUG REPORT EMAIL THE USER ALSO ATTACHED (verbatim):
+---
+{email_text}
+---
+
 After reading the knowledge doc, analyze EACH of the following bug attachment image(s):
 {bug_image_paths}
 
@@ -76,15 +81,27 @@ For EACH attachment, produce a JSON object with this exact shape:
   "device_hints":     {{"platform": "Android | iOS | unknown", "os_visible": "..." | null, "app_version_visible": "..." | null}},
   "triage_signals":   {{"likely_component": "Backend | Backend-Labs | DS | UI | immersive | bugs",
                        "severity_hint":    "P0 | P1 | P2 | P3",
-                       "contradicts_email_claim": "string or null"}},
+                       "contradicts_email_claim": "<see CONTRADICTION DETECTION below>"}},
   "one_line_summary": "Single sentence that captures the bug evidence from this image."
 }}
+
+CONTRADICTION DETECTION (very important)
+Compare what the email describes to what the image actually shows, and set `contradicts_email_claim` AGGRESSIVELY. Set it to a one-sentence description of the mismatch in any of these cases:
+
+  • The image shows a different SLAP screen / feature than the one the email is about.
+    Example: email is about "Checkout / Proceed to Pay crash" but the image shows "Phone login / OTP" — contradicts_email_claim should say "Email reports a checkout-flow crash but the attached image is the phone-login screen with an OTP error — different feature areas."
+
+  • The image shows no anomaly / a normal happy-path state while the email claims something is broken.
+  • The image shows a different platform than the email states (e.g. email says Android, image shows iOS — or vice versa).
+  • The image's visible error message or symptom does not match the symptom the email describes.
+
+Only set `contradicts_email_claim` to null when the image evidence clearly supports or is plausibly relevant to what the email is describing. When in doubt, FLAG IT — a triage analyst can override a false flag, but a missed contradiction wastes engineering time on the wrong bug.
 
 Reply with ONLY a JSON object of the form:
 
 {{
   "findings":         [ <one entry per attachment, in the same order> ],
-  "combined_summary": "1-3 sentence aggregate across ALL attachments — what the images jointly tell us about the bug"
+  "combined_summary": "1-3 sentence aggregate across ALL attachments — what the images jointly tell us about the bug, and whether they agree with the email"
 }}
 
 No markdown fences, no commentary outside the JSON."""
@@ -99,11 +116,16 @@ def _list_images_in_folder(folder: Path) -> list:
     )
 
 
-def process_attachments(image_paths: list) -> MediaResult:
+def process_attachments(image_paths: list, email_text: str = "") -> MediaResult:
     """
     Analyze a list of image paths (absolute or relative). Returns MediaResult
     with per-image findings + a combined summary the host agent folds into
     the bug description before parsing.
+
+    `email_text` is the verbatim bug-report email body. The sub-agent uses
+    it to detect contradictions between what the reporter wrote and what
+    the screenshots actually show. Pass an empty string only when no email
+    body exists.
 
     If image_paths is empty, returns an empty MediaResult immediately.
     """
@@ -116,6 +138,7 @@ def process_attachments(image_paths: list) -> MediaResult:
     prompt = PROMPT_TEMPLATE.format(
         knowledge_path  = str(SLAP_KNOWLEDGE),
         reference_dir   = str(REFERENCE_SCREENS),
+        email_text      = (email_text or "(no email body provided)").strip(),
         bug_image_paths = image_list_str,
     )
 
@@ -159,6 +182,8 @@ def process_attachments(image_paths: list) -> MediaResult:
 
 
 def process_bug_folder(bug_folder: Path) -> MediaResult:
-    """Convenience wrapper: find images inside a bug folder and process them."""
-    images = _list_images_in_folder(bug_folder)
-    return process_attachments(images)
+    """Convenience wrapper: find images + email.txt inside a bug folder and process."""
+    images   = _list_images_in_folder(bug_folder)
+    email_p  = bug_folder / "email.txt"
+    email_t  = email_p.read_text(encoding="utf-8") if email_p.exists() else ""
+    return process_attachments(images, email_text=email_t)
