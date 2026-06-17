@@ -69,8 +69,13 @@ st.markdown(
       [data-testid="stAppDeployButton"], .stAppDeployButton,
       [class*="DeployButton"] { display: none !important; }
 
-      /* Page background — clean white, like SLAP's own home surface */
-      [data-testid="stAppViewContainer"] { background: #FFFFFF; }
+      /* Page background — clean white with a very subtle pink wash up top */
+      [data-testid="stAppViewContainer"] {
+          background:
+              radial-gradient(1200px 600px at 90% -100px, #FFF1F5 0%, transparent 60%),
+              radial-gradient(800px 400px at -10% 200px, #FEF5F9 0%, transparent 55%),
+              #FFFFFF;
+      }
       [data-testid="stMain"] .block-container {
           padding: 1.2rem 2rem 3rem 2rem;
           max-width: 1480px;
@@ -96,33 +101,32 @@ st.markdown(
           color: #18181B; line-height: 1.15; margin: 0;
           display: flex; align-items: center; gap: 10px;
       }
-      .slap-hero-title-star { color: #E11D74; font-size: 26px; }
+      .slap-hero-bug {
+          display: inline-flex; align-items: center; justify-content: center;
+          width: 44px; height: 44px; border-radius: 12px;
+          background: linear-gradient(135deg, #FFE4EC 0%, #FCE7F3 100%);
+          border: 1px solid #FBCFE0;
+          box-shadow: 0 6px 18px -8px rgba(225,29,116,0.30);
+      }
+      .slap-hero-bug svg { width: 26px; height: 26px; }
       .slap-hero-sub {
           color: #78716C; font-size: 14px; line-height: 1.45;
           max-width: 640px;
-      }
-      .slap-hero-badge {
-          padding: 5px 12px; border-radius: 999px;
-          background: rgba(34, 197, 94, 0.10); color: #16A34A;
-          font-size: 11px; font-weight: 600; letter-spacing: 0.4px;
-          border: 1px solid rgba(34, 197, 94, 0.25);
-          display: inline-flex; align-items: center; gap: 6px;
-          align-self: center;
-      }
-      .slap-hero-badge::before {
-          content: ""; width: 6px; height: 6px; border-radius: 50%;
-          background: #22C55E; box-shadow: 0 0 8px rgba(34,197,94,0.6);
       }
 
       /* ── Pipeline stepper (vertical, left rail) ───────────────────── */
       .pipeline-rail {
           display: flex; flex-direction: column; align-items: flex-start;
-          padding: 4px 0;
+          padding: 18px 18px 12px 18px;
           position: sticky; top: 1.2rem;
+          background: linear-gradient(180deg, #FFF5F8 0%, #FFFFFF 100%);
+          border: 1px solid #FCE7F0;
+          border-radius: 18px;
+          box-shadow: 0 12px 30px -18px rgba(225,29,116,0.16);
       }
       .pipeline-rail-title {
           font-size: 10.5px; font-weight: 700; letter-spacing: 1.4px;
-          text-transform: uppercase; color: #A8A29E; margin: 0 0 16px 4px;
+          text-transform: uppercase; color: #BE185D; margin: 0 0 16px 4px;
       }
       .pipe-vnode {
           display: flex; align-items: flex-start; gap: 12px;
@@ -469,7 +473,7 @@ def save_uploads_to_tmp(uploaded_files) -> list:
 with st.sidebar:
     st.markdown("### About")
     st.markdown(
-        "SLAP Bug Triage takes a bug-report email (plus optional screenshots) "
+        "SLAP Bug Triage takes a bug-report email (plus optional media) "
         "and drafts a Jira ticket — with priority, team routing, duplicate "
         "detection, and owner suggestion."
     )
@@ -483,14 +487,30 @@ st.markdown(
     <div class="slap-hero">
       <div class="slap-hero-text">
         <h1 class="slap-hero-title">
-          Slap<span class="slap-hero-title-star">✦</span> Bug Triage
+          <span class="slap-hero-bug" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+              <ellipse cx="12" cy="13.5" rx="5" ry="6.5" fill="#FCE7F3" stroke="#E11D74"/>
+              <line x1="12" y1="7"  x2="12" y2="20" stroke="#E11D74" stroke-width="1.2"/>
+              <circle cx="9.7"  cy="11" r="0.9" fill="#E11D74" stroke="none"/>
+              <circle cx="14.3" cy="11" r="0.9" fill="#E11D74" stroke="none"/>
+              <path d="M11 6 L9 3.5"  stroke="#E11D74"/>
+              <path d="M13 6 L15 3.5" stroke="#E11D74"/>
+              <path d="M7 12 L4 10"   stroke="#E11D74"/>
+              <path d="M7 15 L4 17"   stroke="#E11D74"/>
+              <path d="M17 12 L20 10" stroke="#E11D74"/>
+              <path d="M17 15 L20 17" stroke="#E11D74"/>
+              <path d="M10 20 L9 23"  stroke="#E11D74"/>
+              <path d="M14 20 L15 23" stroke="#E11D74"/>
+            </svg>
+          </span>
+          Slap Bug Triage
         </h1>
         <div class="slap-hero-sub">
           Drafts a Jira ticket from a bug-report email plus screenshots or videos.
           Read-only Jira — nothing is auto-filed; a human reviews every draft.
         </div>
       </div>
-      <div class="slap-hero-badge">Live</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -503,7 +523,7 @@ col_rail, col_main = st.columns([1, 3], gap="large")
 
 PIPELINE_RAIL_HTML = """
 <div class="pipeline-rail">
-  <div class="pipeline-rail-title">Astral · multi-agent pipeline</div>
+  <div class="pipeline-rail-title">Multi-agent pipeline</div>
 
   <div class="pipe-vnode">
     <div class="pipe-vnode-icon endpoint">in</div>
@@ -557,7 +577,7 @@ PIPELINE_RAIL_HTML = """
     <div class="pipe-vnode-icon endpoint output">out</div>
     <div class="pipe-vnode-text">
       <div class="pipe-vnode-name">Output</div>
-      <div class="pipe-vnode-desc">Jira ADF draft + triage_notes JSON.</div>
+      <div class="pipe-vnode-desc">Jira draft + triage_notes JSON.</div>
     </div>
   </div>
 </div>
@@ -818,7 +838,7 @@ if triage_btn:
 
     # ── Tabs ────────────────────────────────────────────────────────────────
 
-    tab_names = ["Summary", "Triage notes", "Raw JSON", "Jira ADF preview"]
+    tab_names = ["Summary", "Triage notes", "Raw JSON"]
     if use_multi_agent and media and media.findings:
         tab_names.insert(1, "Media findings")
     tabs = st.tabs(tab_names)
@@ -916,20 +936,7 @@ if triage_btn:
     with tabs[idx]:
         triage_json = json.dumps(draft.triage_notes, indent=2, ensure_ascii=False)
         st.code(triage_json, language="json")
-        st.download_button(
-            "⬇ Download triage_notes.json",
-            data=triage_json,
-            file_name="triage_notes.json",
-            mime="application/json",
-        )
-    idx += 1
 
-    with tabs[idx]:
-        st.caption(
-            "ADF document the ticket builder produced. Paste-ready into Jira's "
-            "create-issue API. (Auto-create is OFF by design.)"
-        )
-        st.json(draft.jira_payload, expanded=False)
         full_json = json.dumps(
             {
                 "pipeline":          draft.triage_notes.get("pipeline", pipeline_label),
@@ -938,9 +945,20 @@ if triage_btn:
             },
             indent=2, ensure_ascii=False,
         )
-        st.download_button(
-            "⬇ Download full ticket draft JSON",
-            data=full_json,
-            file_name=f"ticket_draft_{pipeline_label.replace(' ', '_')}.json",
-            mime="application/json",
-        )
+        col_dl1, col_dl2 = st.columns(2)
+        with col_dl1:
+            st.download_button(
+                "⬇ Download triage_notes.json",
+                data=triage_json,
+                file_name="triage_notes.json",
+                mime="application/json",
+                use_container_width=True,
+            )
+        with col_dl2:
+            st.download_button(
+                "⬇ Download full ticket draft JSON",
+                data=full_json,
+                file_name=f"ticket_draft_{pipeline_label.replace(' ', '_')}.json",
+                mime="application/json",
+                use_container_width=True,
+            )
