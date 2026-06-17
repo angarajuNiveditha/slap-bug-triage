@@ -757,7 +757,15 @@ if triage_btn:
                 unsafe_allow_html=True,
             )
 
-        if st.button("Refile this bug", type="primary", key="refile_btn"):
+        # Use a versioned key so a previous click doesn't latch True after
+        # rerun, AND wipe every input widget's stored state explicitly —
+        # bumping the version alone isn't enough; Streamlit's file uploader
+        # in particular leaves ghost state on some builds.
+        refile_key = f"refile_btn_v{st.session_state.input_version}"
+        if st.button("Refile this bug", type="primary", key=refile_key):
+            for k in list(st.session_state.keys()):
+                if k.startswith(("input_", "upload_", "pick_", "FormSubmitter")):
+                    del st.session_state[k]
             st.session_state.input_version += 1
             st.rerun()
 
