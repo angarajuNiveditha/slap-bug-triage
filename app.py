@@ -737,7 +737,21 @@ if triage_btn:
                     icon = step_icons.get(suffix, "•")
                     st.markdown(f"{icon} {message}")
 
-                result   = host.triage(raw_text, image_paths=image_paths, on_step=on_step)
+                # Defensive: Streamlit's @st.cache_resource may be holding
+                # a HostAgent instance built before on_step existed. Fall
+                # back gracefully and tell the user to restart for live
+                # progress.
+                import inspect
+                if "on_step" in inspect.signature(host.triage).parameters:
+                    result = host.triage(raw_text, image_paths=image_paths, on_step=on_step)
+                else:
+                    st.warning(
+                        "Live step-by-step progress is unavailable because Streamlit is "
+                        "running a cached pipeline build from before the live-progress "
+                        "change. Restart Streamlit "
+                        "(`pkill -f streamlit && streamlit run app.py`) to get live updates."
+                    )
+                    result = host.triage(raw_text, image_paths=image_paths)
                 bug      = result.bug
                 sim      = result.similarity
                 severity = result.severity
