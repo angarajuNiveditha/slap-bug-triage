@@ -1,0 +1,13 @@
+[client]
+# Hides Streamlit's "Deploy" button reliably (CSS alone is fragile across
+# Streamlit releases). "viewer" mode also keeps the running-status widget
+# and the kebab menu visible — exactly what we want.
+toolbarMode = "viewer"
+
+[theme]
+base               = "light"
+backgroundColor    = "#FBFAF7"
+secondaryBackgroundColor = "#FFFFFF"
+textColor          = "#18181B"
+primaryColor       = "#0F766E"
+font               = "sans-serif"

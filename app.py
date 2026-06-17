@@ -53,19 +53,23 @@ st.set_page_config(
 )
 
 # ── Theme: typography, colours, polish ─────────────────────────────────────
-# Palette: warm rose accent on near-white, charcoal hero. Single accent
-# colour (#E11D48) keeps everything calm. Priority colours stay vivid.
+# Palette: warm cream background, charcoal as the primary, deep teal as the
+# single accent (used sparingly on active states / hovers). No rose.
+# Deploy button is hidden server-side via .streamlit/config.toml; the CSS
+# below also nukes it for older Streamlit builds.
 st.markdown(
     """
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
-      /* Strip ONLY the Deploy button; keep the status widget + kebab menu. */
-      [data-testid="stDeployButton"], .stDeployButton { display: none !important; }
+      /* Belt-and-suspenders Deploy hide (config.toml does the real work). */
+      [data-testid="stDeployButton"], .stDeployButton,
+      [data-testid="stAppDeployButton"], .stAppDeployButton,
+      [class*="DeployButton"] { display: none !important; }
 
-      /* Page background — quiet near-white */
-      [data-testid="stAppViewContainer"] { background: #FAFAF7; }
-      [data-testid="stMain"] .block-container { padding-top: 1.0rem; max-width: 1200px; }
+      /* Page background — warm cream */
+      [data-testid="stAppViewContainer"] { background: #FBFAF7; }
+      [data-testid="stMain"] .block-container { padding-top: 1.0rem; max-width: 1240px; }
 
       /* Typography */
       html, body, [class*="css"], .stMarkdown, .stTextArea, .stSelectbox, .stRadio {
@@ -76,36 +80,37 @@ st.markdown(
 
       /* ── Hero ─────────────────────────────────────────────────────── */
       .slap-hero {
-          background: #0F172A;
+          background: linear-gradient(135deg, #18181B 0%, #27272A 100%);
           color: white;
-          padding: 22px 28px;
-          border-radius: 14px;
-          margin: 4px 0 18px 0;
-          display: flex; align-items: center; gap: 18px;
+          padding: 20px 26px;
+          border-radius: 12px;
+          margin: 4px 0 16px 0;
+          display: flex; align-items: center; gap: 16px;
           position: relative; overflow: hidden;
+          box-shadow: 0 1px 0 rgba(0,0,0,0.04);
       }
       .slap-hero::after {
-          content: ""; position: absolute; right: -40px; top: -40px;
-          width: 200px; height: 200px; border-radius: 100%;
-          background: radial-gradient(circle, rgba(225,29,72,0.35) 0%, transparent 70%);
+          content: ""; position: absolute; right: -60px; top: -60px;
+          width: 220px; height: 220px; border-radius: 100%;
+          background: radial-gradient(circle, rgba(15,118,110,0.28) 0%, transparent 70%);
           pointer-events: none;
       }
       .slap-hero-icon {
-          width: 52px; height: 52px;
-          background: rgba(225,29,72,0.18);
-          border: 1px solid rgba(225,29,72,0.35);
-          border-radius: 12px;
+          width: 46px; height: 46px;
+          background: rgba(15,118,110,0.20);
+          border: 1px solid rgba(15,118,110,0.40);
+          border-radius: 10px;
           display: flex; align-items: center; justify-content: center;
           flex-shrink: 0;
       }
-      .slap-hero-icon svg { width: 30px; height: 30px; color: #FB7185; }
-      .slap-hero-title { font-size: 22px; font-weight: 700; margin: 0; letter-spacing: -0.3px; }
-      .slap-hero-sub   { margin-top: 2px; color: rgba(255,255,255,0.7); font-size: 13px; }
+      .slap-hero-icon svg { width: 26px; height: 26px; color: #5EEAD4; }
+      .slap-hero-title { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: -0.2px; }
+      .slap-hero-sub   { margin-top: 2px; color: rgba(255,255,255,0.65); font-size: 12.5px; }
       .slap-hero-badge {
-          margin-left: auto; padding: 5px 11px; border-radius: 999px;
-          background: rgba(34, 197, 94, 0.15); color: #4ADE80;
-          font-size: 11px; font-weight: 600; letter-spacing: 0.5px;
-          border: 1px solid rgba(34, 197, 94, 0.3);
+          margin-left: auto; padding: 4px 10px; border-radius: 999px;
+          background: rgba(34, 197, 94, 0.14); color: #4ADE80;
+          font-size: 10.5px; font-weight: 600; letter-spacing: 0.5px;
+          border: 1px solid rgba(34, 197, 94, 0.30);
           display: flex; align-items: center; gap: 6px;
       }
       .slap-hero-badge::before {
@@ -115,74 +120,74 @@ st.markdown(
 
       /* ── Pipeline stepper ─────────────────────────────────────────── */
       .pipeline-shell {
-          background: white; border: 1px solid #ECEAE2; border-radius: 14px;
-          padding: 16px 20px; margin-bottom: 22px;
+          background: white; border: 1px solid #E7E5E4; border-radius: 12px;
+          padding: 14px 18px; margin-bottom: 18px;
       }
       .pipeline-title {
-          font-size: 11px; font-weight: 700; letter-spacing: 1.2px;
-          text-transform: uppercase; color: #94928A; margin-bottom: 12px;
+          font-size: 10.5px; font-weight: 700; letter-spacing: 1.1px;
+          text-transform: uppercase; color: #78716C; margin-bottom: 10px;
       }
-      .pipeline-row { display: flex; align-items: stretch; gap: 8px; overflow-x: auto; }
+      .pipeline-row { display: flex; align-items: stretch; gap: 6px; }
       .pipe-node {
-          flex: 1; min-width: 130px;
-          padding: 12px 14px; border-radius: 10px;
-          border: 1px solid #ECEAE2; background: #FAFAF7;
-          display: flex; flex-direction: column; gap: 4px;
+          flex: 1; min-width: 0;
+          padding: 10px 12px; border-radius: 9px;
+          border: 1px solid #E7E5E4; background: #FBFAF7;
+          display: flex; flex-direction: column; gap: 3px;
       }
-      .pipe-node-head { display: flex; align-items: center; gap: 8px; }
+      .pipe-node-head { display: flex; align-items: center; gap: 7px; }
       .pipe-node-icon {
-          width: 26px; height: 26px; border-radius: 7px;
-          background: #FFF1F2; color: #E11D48;
+          width: 22px; height: 22px; border-radius: 6px;
+          background: #F0FDFA; color: #0F766E;
           display: flex; align-items: center; justify-content: center;
-          font-size: 14px; font-weight: 700; flex-shrink: 0;
+          font-size: 12px; font-weight: 700; flex-shrink: 0;
       }
-      .pipe-node-name { font-size: 13px; font-weight: 600; color: #1A1A1A; }
-      .pipe-node-desc { font-size: 11px; color: #6B6B6B; line-height: 1.4; }
+      .pipe-node-name { font-size: 12.5px; font-weight: 600; color: #18181B; }
+      .pipe-node-desc { font-size: 10.5px; color: #78716C; line-height: 1.4; }
       .pipe-edge {
           flex-shrink: 0; align-self: center;
-          width: 14px; height: 2px; background: #D9D6CD;
+          width: 10px; height: 2px; background: #D6D3D1;
           position: relative;
       }
       .pipe-edge::after {
           content: ""; position: absolute; right: -1px; top: -3px;
-          border-left: 6px solid #D9D6CD;
+          border-left: 5px solid #D6D3D1;
           border-top: 4px solid transparent;
           border-bottom: 4px solid transparent;
       }
       .pipe-endpoint {
-          padding: 12px 14px; border-radius: 10px;
-          background: #0F172A; color: white;
+          padding: 10px 12px; border-radius: 9px;
+          background: #18181B; color: white;
           display: flex; flex-direction: column; gap: 2px;
-          justify-content: center; min-width: 100px; flex-shrink: 0;
+          justify-content: center; min-width: 80px; flex-shrink: 0;
       }
-      .pipe-endpoint-label { font-size: 10px; letter-spacing: 0.8px; text-transform: uppercase; color: rgba(255,255,255,0.6); }
-      .pipe-endpoint-value { font-size: 13px; font-weight: 600; }
+      .pipe-endpoint-label { font-size: 9.5px; letter-spacing: 0.7px; text-transform: uppercase; color: rgba(255,255,255,0.55); }
+      .pipe-endpoint-value { font-size: 12px; font-weight: 600; }
 
       /* ── Section headers ─────────────────────────────────────────── */
       .section-label {
           display: inline-flex; align-items: center; gap: 10px;
-          font-size: 11px; font-weight: 700; letter-spacing: 1.2px;
-          text-transform: uppercase; color: #94928A;
-          margin: 18px 0 10px 0;
+          font-size: 10.5px; font-weight: 700; letter-spacing: 1.2px;
+          text-transform: uppercase; color: #78716C;
+          margin: 14px 0 8px 0;
       }
       .section-label::before {
-          content: ""; width: 22px; height: 2px; background: #E11D48; border-radius: 2px;
+          content: ""; width: 22px; height: 2px; background: #0F766E; border-radius: 2px;
       }
 
       /* ── Custom metric tiles ──────────────────────────────────────── */
-      .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 6px 0 18px 0; }
+      .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 4px 0 16px 0; }
       .mtile {
           background: white;
-          border: 1px solid #ECEAE2;
-          border-radius: 12px;
-          padding: 14px 16px;
+          border: 1px solid #E7E5E4;
+          border-radius: 11px;
+          padding: 13px 15px;
           transition: transform 0.15s, box-shadow 0.15s;
       }
-      .mtile:hover { transform: translateY(-1px); box-shadow: 0 8px 20px -10px rgba(15,23,42,0.10); }
+      .mtile:hover { transform: translateY(-1px); box-shadow: 0 8px 20px -10px rgba(0,0,0,0.10); }
       .mtile-label { font-size: 10px; font-weight: 700; letter-spacing: 1px;
-                     text-transform: uppercase; color: #94928A; margin-bottom: 8px; }
-      .mtile-value { font-size: 22px; font-weight: 700; color: #1A1A1A; line-height: 1.1; }
-      .mtile-sub   { font-size: 11.5px; color: #6B6B6B; margin-top: 4px; }
+                     text-transform: uppercase; color: #78716C; margin-bottom: 7px; }
+      .mtile-value { font-size: 21px; font-weight: 700; color: #18181B; line-height: 1.1; }
+      .mtile-sub   { font-size: 11px; color: #78716C; margin-top: 3px; }
 
       .mtile.prio-P0 { background: #FEF2F2; border-color: #FCA5A5; }
       .mtile.prio-P0 .mtile-value { color: #B91C1C; }
@@ -195,56 +200,56 @@ st.markdown(
 
       /* ── Buttons ─────────────────────────────────────────────────── */
       .stButton button[kind="primary"] {
-          background: #E11D48; border: 0; border-radius: 10px;
-          padding: 10px 18px; font-weight: 600; letter-spacing: 0.2px; color: white;
-          box-shadow: 0 6px 14px -6px rgba(225,29,72,0.5);
+          background: #18181B; border: 0; border-radius: 10px;
+          padding: 11px 20px; font-weight: 600; letter-spacing: 0.2px; color: white;
+          box-shadow: 0 4px 12px -4px rgba(0,0,0,0.25);
           transition: transform 0.12s, box-shadow 0.12s, background 0.12s;
       }
       .stButton button[kind="primary"]:hover:not(:disabled) {
-          background: #BE123C;
+          background: #0F766E;
           transform: translateY(-1px);
-          box-shadow: 0 10px 22px -8px rgba(225,29,72,0.6);
+          box-shadow: 0 8px 18px -6px rgba(15,118,110,0.45);
       }
       .stButton button[kind="primary"]:disabled {
-          background: #D9D6CD; color: #94928A; box-shadow: none;
+          background: #E7E5E4; color: #A8A29E; box-shadow: none;
       }
       .stButton button[kind="secondary"] {
-          background: white; border: 1px solid #ECEAE2; color: #1A1A1A;
+          background: white; border: 1px solid #E7E5E4; color: #18181B;
           border-radius: 10px; font-weight: 500;
       }
 
       /* ── Inputs ───────────────────────────────────────────────────── */
       .stTextArea textarea {
-          border-radius: 12px !important;
-          border: 1px solid #ECEAE2 !important;
+          border-radius: 11px !important;
+          border: 1px solid #E7E5E4 !important;
           font-family: 'JetBrains Mono', monospace !important;
-          font-size: 13px !important;
+          font-size: 12.5px !important;
           background: white !important;
       }
       .stTextArea textarea:focus {
-          border-color: #E11D48 !important;
-          box-shadow: 0 0 0 3px rgba(225,29,72,0.12) !important;
+          border-color: #0F766E !important;
+          box-shadow: 0 0 0 3px rgba(15,118,110,0.12) !important;
       }
       [data-testid="stFileUploader"] section {
-          border-radius: 12px;
-          border: 1px dashed #D9D6CD !important;
+          border-radius: 11px;
+          border: 1px dashed #D6D3D1 !important;
           background: white;
       }
       /* Constrain inline image previews — Streamlit makes them huge by default. */
-      [data-testid="stFileUploaderFile"] img { max-width: 88px !important; max-height: 88px !important; border-radius: 6px; }
+      [data-testid="stFileUploaderFile"] img { max-width: 76px !important; max-height: 76px !important; border-radius: 6px; }
 
       /* ── Tabs ────────────────────────────────────────────────────── */
       .stTabs [data-baseweb="tab-list"] {
-          gap: 2px; border-bottom: 1px solid #ECEAE2;
+          gap: 2px; border-bottom: 1px solid #E7E5E4;
           background: transparent;
       }
       .stTabs [data-baseweb="tab"] {
           font-weight: 600; font-size: 13px;
-          padding: 10px 18px; color: #6B6B6B;
+          padding: 10px 18px; color: #78716C;
       }
       .stTabs [aria-selected="true"] {
-          color: #E11D48 !important;
-          border-bottom: 2px solid #E11D48 !important;
+          color: #0F766E !important;
+          border-bottom: 2px solid #0F766E !important;
       }
 
       /* ── Quality issues ──────────────────────────────────────────── */
@@ -253,8 +258,8 @@ st.markdown(
           border: 1px solid #FCA5A5;
           border-left: 4px solid #DC2626;
           border-radius: 10px;
-          padding: 16px 20px;
-          margin: 6px 0 16px 0;
+          padding: 15px 19px;
+          margin: 6px 0 14px 0;
       }
       .quality-banner h4 { margin: 0 0 3px 0; color: #B91C1C; font-size: 15px; font-weight: 700; }
       .quality-banner p  { margin: 0; color: #7F1D1D; font-size: 13px; }
@@ -263,8 +268,8 @@ st.markdown(
           background: white;
           border: 1px solid #FECACA;
           border-radius: 10px;
-          padding: 14px 18px;
-          margin-bottom: 10px;
+          padding: 13px 17px;
+          margin-bottom: 9px;
       }
       .quality-card-kind {
           display: inline-block;
@@ -272,36 +277,37 @@ st.markdown(
           padding: 2px 9px; border-radius: 999px;
           font-size: 10.5px; font-weight: 700; letter-spacing: 0.6px;
           text-transform: uppercase;
-          margin-bottom: 8px;
+          margin-bottom: 7px;
       }
-      .quality-card-msg    { color: #1A1A1A; font-size: 13.5px; line-height: 1.55; margin: 4px 0; }
-      .quality-card-action { color: #475569; font-size: 12.5px; line-height: 1.55; margin-top: 6px;
-                             padding-top: 8px; border-top: 1px dashed #ECEAE2; }
+      .quality-card-msg    { color: #18181B; font-size: 13.5px; line-height: 1.55; margin: 4px 0; }
+      .quality-card-action { color: #57534E; font-size: 12.5px; line-height: 1.55; margin-top: 6px;
+                             padding-top: 7px; border-top: 1px dashed #E7E5E4; }
 
       /* ── Attachment thumb strip (custom) ─────────────────────────── */
       .thumb-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-      .thumb { width: 96px; height: 96px; border-radius: 8px; border: 1px solid #ECEAE2;
-               object-fit: cover; background: #FAFAF7; }
-      .thumb-cap { font-size: 11px; color: #6B6B6B; text-align: center; margin-top: 3px;
-                   max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .thumb { width: 78px; height: 78px; border-radius: 7px; border: 1px solid #E7E5E4;
+               object-fit: cover; background: #FBFAF7; }
+      .thumb-cap { font-size: 10.5px; color: #78716C; text-align: center; margin-top: 3px;
+                   max-width: 78px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .thumb-wrap { display: flex; flex-direction: column; align-items: center; }
 
       /* ── Misc ────────────────────────────────────────────────────── */
-      .stCaption, .caption { color: #6B6B6B !important; }
-      hr { border-color: #ECEAE2 !important; margin: 14px 0 !important; }
+      .stCaption, .caption { color: #78716C !important; }
+      hr { border-color: #E7E5E4 !important; margin: 14px 0 !important; }
 
-      /* Compact info card */
-      .info-card {
-          background: white; border: 1px solid #ECEAE2; border-radius: 12px;
-          padding: 16px 18px;
+      /* Sidekick info card (right-column filler so layout balances) */
+      .help-card {
+          background: white; border: 1px solid #E7E5E4; border-radius: 11px;
+          padding: 12px 15px; margin-top: 10px;
       }
-      .info-card h5 { margin: 0 0 8px 0; font-size: 12px; font-weight: 700; letter-spacing: 0.8px;
-                      text-transform: uppercase; color: #94928A; }
-      .info-card-row { display: flex; justify-content: space-between; padding: 6px 0;
-                       border-bottom: 1px dashed #ECEAE2; font-size: 13px; }
-      .info-card-row:last-child { border-bottom: 0; }
-      .info-card-row span:first-child { color: #6B6B6B; }
-      .info-card-row span:last-child  { color: #1A1A1A; font-weight: 500; }
+      .help-card h6 { margin: 0 0 6px 0; font-size: 10.5px; font-weight: 700; letter-spacing: 1px;
+                      text-transform: uppercase; color: #78716C; }
+      .help-card-row { font-size: 12px; color: #57534E; line-height: 1.5; margin: 3px 0;
+                       display: flex; gap: 6px; align-items: baseline; }
+      .help-card-row::before {
+          content: ""; width: 4px; height: 4px; border-radius: 50%; background: #0F766E;
+          flex-shrink: 0; margin-top: 7px;
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -598,7 +604,6 @@ with col_aside:
         accept_multiple_files=True,
         help="The media sub-agent reads each image, identifies the SLAP screen, and extracts visible bug evidence.",
         key=f"upload_{st.session_state.input_version}",
-        label_visibility="visible",
     )
 
     if uploaded_files:
@@ -619,22 +624,39 @@ with col_aside:
     if uploaded_files and pipeline_choice.startswith("Rule-based"):
         st.caption("⚠ Rule-based ignores attachments. Switch to multi-agent to use them.")
 
+    # Sidekick help-card fills the right column so the layout balances
+    # against the tall textarea on the left.
+    st.markdown(
+        """
+        <div class="help-card">
+          <h6>What you'll get</h6>
+          <div class="help-card-row">Priority (P0–P3) with a plain-English justification</div>
+          <div class="help-card-row">Team routing across BE_Flippi, BE_Labs, DS, UI, Immersive</div>
+          <div class="help-card-row">Suggested owner from the most-similar past bugs</div>
+          <div class="help-card-row">Duplicate flag with confidence (≥ 0.80)</div>
+          <div class="help-card-row">Jira ADF draft, ready to paste — never auto-filed</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 with col_input:
     raw_text = st.text_area(
         "Bug report email",
         value=default_text,
-        height=360,
+        height=420,
         placeholder="From: someone@flipkart.com\nSubject: [URGENT] ...\n\nDescribe the bug here...",
         key=f"input_{pick}_{st.session_state.input_version}",
         label_visibility="collapsed",
     )
 
-    triage_btn = st.button(
-        "Triage this bug",
-        type="primary",
-        disabled=not raw_text.strip(),
-        use_container_width=True,
-    )
+# Full-width Triage button below both columns
+triage_btn = st.button(
+    "Triage this bug",
+    type="primary",
+    disabled=not raw_text.strip(),
+    use_container_width=True,
+)
 
 
 # ── Pipeline run ────────────────────────────────────────────────────────────
