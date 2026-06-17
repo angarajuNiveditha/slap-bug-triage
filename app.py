@@ -15,6 +15,7 @@ Run:
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import tempfile
@@ -47,16 +48,179 @@ DATA_DIR      = Path(__file__).parent / "data"
 
 st.set_page_config(
     page_title="SLAP Bug Triage",
+    page_icon="🪲",
     layout="wide",
 )
 
-# Hide Streamlit's Deploy button + running-status icon for a cleaner header.
+# ── Theme: typography, colours, polish ─────────────────────────────────────
 st.markdown(
     """
     <style>
-      [data-testid="stDeployButton"]      { display: none !important; }
-      .stDeployButton                      { display: none !important; }
-      [data-testid="stStatusWidget"]      { display: none !important; }
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+      /* Strip Streamlit chrome */
+      [data-testid="stDeployButton"], .stDeployButton,
+      [data-testid="stStatusWidget"]         { display: none !important; }
+      header[data-testid="stHeader"]         { background: transparent; height: 0; }
+      footer                                  { display: none !important; }
+      #MainMenu                               { display: none !important; }
+
+      /* Page background */
+      [data-testid="stAppViewContainer"] {
+          background: linear-gradient(180deg, #F8FAFC 0%, #FFFFFF 50%);
+      }
+      [data-testid="stMain"] .block-container {
+          padding-top: 1.2rem;
+          max-width: 1180px;
+      }
+
+      /* Typography */
+      html, body, [class*="css"], .stMarkdown, .stTextArea, .stSelectbox, .stRadio {
+          font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+      }
+      code, pre { font-family: 'JetBrains Mono', monospace !important; font-size: 12.5px !important; }
+
+      /* ── Hero ─────────────────────────────────────────────────────── */
+      .slap-hero {
+          background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 50%, #DB2777 100%);
+          color: white;
+          padding: 26px 32px;
+          border-radius: 18px;
+          box-shadow: 0 20px 40px -12px rgba(79, 70, 229, 0.35);
+          margin-bottom: 24px;
+          display: flex;
+          align-items: center;
+          gap: 20px;
+      }
+      .slap-hero-icon {
+          width: 60px; height: 60px;
+          background: rgba(255,255,255,0.18);
+          border-radius: 14px;
+          display: flex; align-items: center; justify-content: center;
+          backdrop-filter: blur(8px);
+          flex-shrink: 0;
+      }
+      .slap-hero-icon svg { width: 36px; height: 36px; }
+      .slap-hero-title { font-size: 26px; font-weight: 700; margin: 0; letter-spacing: -0.4px; }
+      .slap-hero-sub   { margin-top: 4px; color: rgba(255,255,255,0.85); font-size: 13.5px; }
+
+      /* ── Section headers ─────────────────────────────────────────── */
+      .section-label {
+          display: inline-flex; align-items: center; gap: 8px;
+          font-size: 11px; font-weight: 600; letter-spacing: 1.2px;
+          text-transform: uppercase;
+          color: #6366F1;
+          margin: 24px 0 8px 0;
+      }
+      .section-label::before {
+          content: ""; width: 24px; height: 2px;
+          background: linear-gradient(90deg, #4F46E5, #DB2777);
+          border-radius: 2px;
+      }
+
+      /* ── Custom metric tiles ──────────────────────────────────────── */
+      .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin: 8px 0 18px 0; }
+      .mtile {
+          background: white;
+          border: 1px solid #E2E8F0;
+          border-radius: 14px;
+          padding: 16px 18px;
+          transition: transform 0.15s, box-shadow 0.15s;
+      }
+      .mtile:hover { transform: translateY(-2px); box-shadow: 0 10px 24px -8px rgba(15,23,42,0.12); }
+      .mtile-label { font-size: 10.5px; font-weight: 600; letter-spacing: 0.9px;
+                     text-transform: uppercase; color: #64748B; margin-bottom: 8px; }
+      .mtile-value { font-size: 22px; font-weight: 700; color: #0F172A; line-height: 1.15; }
+      .mtile-sub   { font-size: 12px; color: #64748B; margin-top: 4px; }
+
+      .mtile.prio-P0 { background: linear-gradient(135deg, #FEF2F2 0%, #FFFFFF 100%); border-color: #FCA5A5; }
+      .mtile.prio-P0 .mtile-value { color: #B91C1C; }
+      .mtile.prio-P1 { background: linear-gradient(135deg, #FFF7ED 0%, #FFFFFF 100%); border-color: #FDBA74; }
+      .mtile.prio-P1 .mtile-value { color: #C2410C; }
+      .mtile.prio-P2 { background: linear-gradient(135deg, #FFFBEB 0%, #FFFFFF 100%); border-color: #FCD34D; }
+      .mtile.prio-P2 .mtile-value { color: #B45309; }
+      .mtile.prio-P3 { background: linear-gradient(135deg, #EFF6FF 0%, #FFFFFF 100%); border-color: #93C5FD; }
+      .mtile.prio-P3 .mtile-value { color: #1D4ED8; }
+
+      /* ── Buttons ─────────────────────────────────────────────────── */
+      .stButton button[kind="primary"] {
+          background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%);
+          border: 0; border-radius: 10px; padding: 10px 18px;
+          font-weight: 600; letter-spacing: 0.2px;
+          box-shadow: 0 6px 14px -4px rgba(79,70,229,0.45);
+          transition: transform 0.15s, box-shadow 0.15s;
+      }
+      .stButton button[kind="primary"]:hover:not(:disabled) {
+          transform: translateY(-1px);
+          box-shadow: 0 10px 20px -6px rgba(79,70,229,0.55);
+      }
+      .stButton button[kind="primary"]:disabled {
+          background: #CBD5E1; color: white; box-shadow: none; opacity: 0.6;
+      }
+
+      /* ── Text area + uploader polish ─────────────────────────────── */
+      .stTextArea textarea {
+          border-radius: 12px !important;
+          border-color: #E2E8F0 !important;
+          font-family: 'JetBrains Mono', monospace !important;
+          font-size: 13px !important;
+      }
+      .stTextArea textarea:focus {
+          border-color: #6366F1 !important;
+          box-shadow: 0 0 0 3px rgba(99,102,241,0.12) !important;
+      }
+      [data-testid="stFileUploader"] section {
+          border-radius: 12px;
+          border-style: dashed !important;
+          border-color: #CBD5E1 !important;
+          background: #F8FAFC;
+      }
+
+      /* ── Tabs ────────────────────────────────────────────────────── */
+      .stTabs [data-baseweb="tab-list"] { gap: 4px; border-bottom: 1px solid #E2E8F0; }
+      .stTabs [data-baseweb="tab"] {
+          font-weight: 600; font-size: 13.5px;
+          padding: 10px 16px; border-radius: 8px 8px 0 0;
+      }
+      .stTabs [aria-selected="true"] {
+          color: #4F46E5 !important;
+          background: #EEF2FF;
+      }
+
+      /* ── Quality issues card ─────────────────────────────────────── */
+      .quality-banner {
+          background: linear-gradient(135deg, #FEF2F2 0%, #FFF7ED 100%);
+          border: 1px solid #FCA5A5;
+          border-left: 4px solid #DC2626;
+          border-radius: 12px;
+          padding: 18px 22px;
+          margin: 10px 0 18px 0;
+      }
+      .quality-banner h4 { margin: 0 0 4px 0; color: #B91C1C; font-size: 16px; font-weight: 700; }
+      .quality-banner p  { margin: 0; color: #7F1D1D; font-size: 13.5px; }
+
+      .quality-card {
+          background: white;
+          border: 1px solid #FECACA;
+          border-radius: 10px;
+          padding: 14px 18px;
+          margin-bottom: 10px;
+      }
+      .quality-card-kind {
+          display: inline-block;
+          background: #FEE2E2; color: #B91C1C;
+          padding: 3px 10px; border-radius: 999px;
+          font-size: 11px; font-weight: 600; letter-spacing: 0.5px;
+          text-transform: uppercase;
+          margin-bottom: 8px;
+      }
+      .quality-card-msg    { color: #0F172A; font-size: 14px; line-height: 1.5; margin: 4px 0; }
+      .quality-card-action { color: #475569; font-size: 13px; line-height: 1.5; margin-top: 6px;
+                             padding-top: 8px; border-top: 1px dashed #E2E8F0; }
+
+      /* ── Misc ────────────────────────────────────────────────────── */
+      .stCaption, .caption { color: #64748B !important; }
+      hr { border-color: #E2E8F0 !important; margin: 12px 0 !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -221,15 +385,41 @@ with st.sidebar:
     st.markdown("**No tickets are filed automatically.** A human reviews and files.")
 
 
-# ── Header ──────────────────────────────────────────────────────────────────
+# ── Hero ───────────────────────────────────────────────────────────────────
 
-st.title("SLAP Bug Triage")
-st.caption("Paste the report. Attach screenshots if you have them. The agent drafts the ticket.")
+st.markdown(
+    """
+    <div class="slap-hero">
+      <div class="slap-hero-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+          <ellipse cx="12" cy="13.5" rx="5" ry="6.5" fill="white" stroke="white"/>
+          <line x1="12" y1="7"  x2="12" y2="20" stroke="#7C3AED" stroke-width="1.2"/>
+          <circle cx="9.7" cy="11" r="0.9" fill="#7C3AED" stroke="none"/>
+          <circle cx="14.3" cy="11" r="0.9" fill="#7C3AED" stroke="none"/>
+          <path d="M11 6 L9 3.5"  />
+          <path d="M13 6 L15 3.5" />
+          <path d="M7 12 L4 10"   />
+          <path d="M7 15 L4 17"   />
+          <path d="M17 12 L20 10" />
+          <path d="M17 15 L20 17" />
+          <path d="M10 20 L9 23"  />
+          <path d="M14 20 L15 23" />
+        </svg>
+      </div>
+      <div>
+        <div class="slap-hero-title">SLAP Bug Triage</div>
+        <div class="slap-hero-sub">Paste the report. Attach screenshots. The agent drafts a Jira ticket — no auto-filing.</div>
+      </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 # ── Input ───────────────────────────────────────────────────────────────────
 
-st.subheader("1. Bug report")
+st.markdown('<div class="section-label">Step 1 · Bug report</div>', unsafe_allow_html=True)
 
 samples       = sorted(DATA_DIR.glob("*.txt")) if DATA_DIR.exists() else []
 sample_names  = ["(paste your own)"] + [p.name for p in samples]
@@ -353,7 +543,7 @@ if triage_btn:
 
     # ── Headline ────────────────────────────────────────────────────────────
 
-    st.subheader("2. Result")
+    st.markdown('<div class="section-label">Step 2 · Result</div>', unsafe_allow_html=True)
 
     # ── Quality warnings (vague report / image-vs-text contradiction) ──────
     # If we flag a quality issue we STOP rendering — no tentative draft is
@@ -361,38 +551,77 @@ if triage_btn:
     # input wasn't good enough to triage on.
     quality_issues = draft.triage_notes.get("quality_issues") or []
     if quality_issues:
-        st.error(
-            "⚠ **This bug cannot be triaged confidently.** "
-            "The report is missing critical details, or the attached image "
-            "contradicts the text. Please refile with the corrections below."
+        st.markdown(
+            """
+            <div class="quality-banner">
+              <h4>⚠ This bug cannot be triaged confidently</h4>
+              <p>The report is missing critical details, or the attached image contradicts the text.
+              Please refile with the corrections below.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
         for q in quality_issues:
             kind = q.get("type", "issue")
             label = {
-                "vague_report":            "📝 Vague report",
-                "media_contradicts_text":  "🖼 Image ⇄ email mismatch",
+                "vague_report":            "Vague report",
+                "media_contradicts_text":  "Image ⇄ email mismatch",
             }.get(kind, kind)
 
-            with st.container(border=True):
-                st.markdown(f"**{label}**")
-                st.markdown(q.get("message", ""))
-                action = q.get("suggested_action")
-                if action:
-                    st.markdown(f"_What to do:_ {action}")
+            msg    = html.escape(q.get("message", ""))
+            action = html.escape(q.get("suggested_action", ""))
+            st.markdown(
+                f"""
+                <div class="quality-card">
+                  <span class="quality-card-kind">{label}</span>
+                  <div class="quality-card-msg">{msg}</div>
+                  {f'<div class="quality-card-action"><strong>What to do.</strong> {action}</div>' if action else ''}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-        if st.button("📝 Refile this bug", type="primary", key="refile_btn"):
+        if st.button("Refile this bug", type="primary", key="refile_btn"):
             st.session_state.input_version += 1
             st.rerun()
 
         st.stop()
 
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Priority", severity.priority, severity.severity)
-    m2.metric("Team",     draft.triage_notes.get("team", "—"))
-    m3.metric("Owner",    sim.suggested_owner or "—")
-    m4.metric("Duplicate of", sim.duplicate_of or "—",
-              f"{sim.duplicate_confidence:.0%} confidence" if sim.duplicate_of else None)
+    # Priority-coloured tile grid
+    prio = severity.priority if severity.priority in ("P0", "P1", "P2", "P3") else "P2"
+    team_v   = draft.triage_notes.get("team", "—")
+    owner_v  = sim.suggested_owner or "—"
+    dup_v    = sim.duplicate_of or "—"
+    dup_sub  = f"{sim.duplicate_confidence:.0%} confidence" if sim.duplicate_of else "no duplicate found"
+
+    st.markdown(
+        f"""
+        <div class="metric-grid">
+          <div class="mtile prio-{prio}">
+            <div class="mtile-label">Priority</div>
+            <div class="mtile-value">{prio}</div>
+            <div class="mtile-sub">{html.escape(severity.severity)}</div>
+          </div>
+          <div class="mtile">
+            <div class="mtile-label">Team</div>
+            <div class="mtile-value">{html.escape(str(team_v))}</div>
+            <div class="mtile-sub">{html.escape(draft.triage_notes.get('jira_component', '—'))}</div>
+          </div>
+          <div class="mtile">
+            <div class="mtile-label">Owner</div>
+            <div class="mtile-value">{html.escape(str(owner_v))}</div>
+            <div class="mtile-sub">most-similar past bugs</div>
+          </div>
+          <div class="mtile">
+            <div class="mtile-label">Duplicate of</div>
+            <div class="mtile-value">{html.escape(str(dup_v))}</div>
+            <div class="mtile-sub">{html.escape(dup_sub)}</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     if sim.duplicate_of:
         st.markdown(f"🔗 Open duplicate: {jira_link(sim.duplicate_of)}")
