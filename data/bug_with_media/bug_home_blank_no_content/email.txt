@@ -1,0 +1,74 @@
+From: karthik.reddy@flipkart.com
+To: slap-bugs@flipkart.com
+Subject: Home page is completely blank — no greeting, no Top Picks, no chat entry
+
+Hi Team,
+
+The SLAP home page is rendering almost completely empty for me. After
+launch, I see the address selector at the top ("6-240 s.l.v&s.t.r
+arcade…"), my profile icon top-right, the SLAP logo, and at the bottom
+the "Explore what SLAP can do for you" up-arrow nudge — and that's
+*it*. The entire middle of the screen is blank except for a faint
+bluish blur where I'd normally expect content.
+
+What is MISSING that should be there:
+- The personalized greeting ("Hi <name>") — gone
+- The chat input / "Ask SLAP" entry — gone
+- Top Picks for You — gone
+- Today's Style Drop / Insta Finds / Style Arena sections — gone
+- Suggestions based on your recent conversations — gone
+- Any product cards / placeholder tiles — none visible (not even
+  loading placeholders like "[Product Tile]")
+
+Attached: screenshot1.png — the home screen as I see it.
+
+Steps to Reproduce:
+1. Open SLAP on iPhone (I'm already logged in, address is set)
+2. Land on the home page
+3. Wait 30+ seconds — nothing fills in
+4. Pull-to-refresh — same blank state
+5. Force-quit and reopen — same blank state
+
+Expected:
+Home should show my greeting, the chat entry point, and at least one
+of the discovery sections (Top Picks / Style Drop / Inspiration).
+
+Actual:
+Header (logo + address + profile) and bottom nudge render, but the
+entire content area between them is blank. Just a faint bluish smudge
+in the middle, like a loading shimmer that never resolved.
+
+Reproducibility:
+~5 cold-starts in a row over 15 minutes, all identical. Wi-Fi is
+connected (visible in status bar); cellular shows weaker signal but
+Wi-Fi should be doing the work. Other Flipkart apps on the same
+device load content fine, so it's not a network-wide outage.
+
+Environment:
+- Platform: iOS (iPhone status bar visible)
+- App: SLAP (latest build I have installed; cannot read exact
+  version from this screen)
+- Network: Wi-Fi connected, cellular weak but present
+- Time of report: 12:20 IST
+- Address selected: 6-240 S.L.V & S.T.R Arcade (truncated in UI)
+
+Impact:
+The home page is the entry point for the whole app. With it blank,
+the user has nothing to tap and no clear path forward — chat is
+inaccessible, recommendations are absent, and the "Explore" nudge
+at the bottom does not lead anywhere obvious. Functionally, the app
+is unusable in this state. If this is reproducible for other users,
+it's a major issue.
+
+Could be:
+- Backend retrieval failure (Top Picks / Style Drops endpoints returning empty)
+- Persona / profile failed to load, blocking the greeting and personalised feed
+- React Native render race where the content list mounted but never received data
+- Some combination of the above
+
+Logs are not visible from the screenshot. I can grab Logcat / device
+logs if someone tells me which framework events to look for.
+
+Regards,
+Karthik Reddy
+QA, SLAP

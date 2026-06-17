@@ -1,0 +1,50 @@
+From: meera.kapoor@flipkart.com
+To: slap-bugs@flipkart.com
+Subject: Login broken — "Failed to send OTP" on the phone-number screen
+
+Hi Team,
+
+I cannot log in to SLAP. On the phone-login screen, after I enter my
+number and tap "Send OTP", the app shows a red "Failed to send OTP"
+message right above the button. No OTP arrives on my phone. Tapping
+"Send OTP" again just repeats the same error — no retry succeeds.
+
+Attached: screenshot.png — the login screen with my number entered
+and the red "Failed to send OTP" error visible.
+
+Steps to Reproduce:
+1. Install / open SLAP and reach the "Hey! What's your number?" screen
+2. Enter a valid +91 phone number linked to a Flipkart account
+3. Tap "Send OTP"
+4. Red error "Failed to send OTP" appears above the button
+5. No SMS / OTP is received
+
+Expected: an OTP is sent over SMS within a few seconds; the screen
+moves to the OTP-entry page.
+Actual: red "Failed to send OTP" error; user is stuck on the phone
+number screen with no way to proceed.
+
+Reproducibility: 100% across multiple attempts. Tried 6 times over
+~10 minutes with the same number, all failed identically.
+
+Environment:
+- Platform: iOS (screenshot shows an iPhone-style status bar)
+- App version: latest from the staging build (cannot confirm exact
+  version — there is no "About" entry on this screen)
+- Network: phone has signal bars + Wi-Fi active in the status bar,
+  battery full. Tested on both Wi-Fi-only and 4G; same error on both.
+- Other Flipkart apps on the same device send OTPs successfully —
+  so the phone number / carrier delivery is fine. The issue is in
+  SLAP's OTP request path.
+
+Impact:
+This blocks ALL new sign-ins to SLAP. New users cannot create an
+account; existing users who get logged out cannot sign back in. The
+app is effectively unusable for anyone hitting the login screen
+right now. Filing as urgent.
+
+I have not changed my phone number or Flipkart account recently.
+
+Regards,
+Meera Kapoor
+QA, SLAP

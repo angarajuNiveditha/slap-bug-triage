@@ -1,0 +1,77 @@
+From: aditya.joshi@flipkart.com
+To: slap-bugs@flipkart.com
+Subject: 15 Minutes — product prices showing ₹0 for Muesli items (Cornflakes fine on same screen)
+
+Hi Team,
+
+In the SLAP "15 Minutes" (quick-commerce) flow, several product cards
+are displaying their price as **₹0** instead of the actual price. This
+is inconsistent — products in other categories on the SAME screen show
+their prices correctly with discounts applied, so it's not a full
+price-service outage. It's category- or product-specific.
+
+Attached: screenshot1.png — taken from the 15 Minutes category-browse
+view at address "D No: 3-548, 2nd Floor, Jawahar Vidya …".
+
+What I see (top to bottom):
+
+Cornflakes section — prices correct:
+- Kellogg's Corn Flakes (53 g): -5%, ₹20 (strikethrough) ₹19 ✓
+- Delish by Flipkart Corn Flakes (400 g): -57%, ₹150 (strikethrough) ₹65 ✓
+
+Muesli section — prices BROKEN (showing ₹0):
+- Bagrry's 16 in 1 Fruit & Nut Muesli (750 g, 4.3★) → **₹0** ✗
+- Kellogg's Muesli Fruit & Seeds (500 g, 4.5★) → **₹0** ✗
+
+(Fruit Jam section is collapsed, Peanut Butter section is partially
+visible at the bottom — I did not scroll further to check those.)
+
+Steps to Reproduce:
+1. Open SLAP, ensure address is selected (mine: Jawahar Vidya …)
+2. Enter the "15 Minutes" quick-commerce flow (chat or category nav)
+3. Land on the category-browse view with Cornflakes / Muesli / Fruit
+   Jam / Peanut Butter sections
+4. Observe: Cornflakes items show real prices and discount %,
+   Muesli items show ₹0 with no strike-through and no discount
+
+Expected:
+Every product card shows a numeric price (and discount % where
+applicable), the same way the Cornflakes items render.
+
+Actual:
+Muesli products show ₹0 — no MRP, no discount, no struck-through
+price. The image, title, weight badge, star-rating and "+" Add button
+are all rendered normally; only the price field is wrong.
+
+Reproducibility:
+3/3 cold-starts of the app, same address, same products. The Muesli
+items consistently render ₹0 every time.
+
+Concerns about downstream impact:
+- If a user taps "+" on a ₹0 product, does the cart accept it at ₹0?
+  This would let customers add items for free.
+- If the price service is returning 0 vs the UI is rendering 0 incorrectly,
+  the failure mode for cart/checkout is different — needs verification.
+- Could mislead users into thinking the items are free / on sale.
+
+Environment:
+- Platform: iOS (iPhone-style status bar)
+- App: SLAP, "15 Minutes" quick-commerce flow
+- Time of report: 3:42 PM
+- Network: Wi-Fi connected, cellular weak; other categories on the
+  same screen are loading prices fine, so it's not a generic network
+  issue.
+- Address: D No: 3-548, 2nd Floor, Jawahar Vidya …
+
+Impact:
+Affects a subset of products / categories in the quick-commerce flow.
+Could be a price-service / pricing-pipeline regression for specific
+brand-category combinations, OR a UI rendering bug where the
+price field defaults to 0 when some upstream field is null/missing.
+Either way it erodes trust ("are these items really free?") and
+potentially exposes us to ₹0 adds-to-cart if not handled defensively
+downstream.
+
+Regards,
+Aditya Joshi
+QA, SLAP
