@@ -47,8 +47,19 @@ DATA_DIR      = Path(__file__).parent / "data"
 
 st.set_page_config(
     page_title="SLAP Bug Triage",
-    page_icon="🐞",
     layout="wide",
+)
+
+# Hide Streamlit's Deploy button + running-status icon for a cleaner header.
+st.markdown(
+    """
+    <style>
+      [data-testid="stDeployButton"]      { display: none !important; }
+      .stDeployButton                      { display: none !important; }
+      [data-testid="stStatusWidget"]      { display: none !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 # Bump this counter (via the "Refile" button) to force-reset the input
@@ -209,28 +220,10 @@ with st.sidebar:
     )
     st.markdown("**No tickets are filed automatically.** A human reviews and files.")
 
-    st.divider()
-    st.markdown("### Pipelines")
-    st.markdown(
-        "- **Multi-agent (Astral)** — Claude Code headless. Sub-agents for "
-        "media, parser, embeddings, dedup, triage. Reads images. ~90–150 s/bug.\n"
-        "- **Rule-based** — regex + TF-IDF, instant, text-only. Fallback / simulation."
-    )
-
-    st.divider()
-    st.markdown("### Sub-agents (multi-agent)")
-    st.markdown(
-        "1. **Media** — images → SLAP-aware findings (skipped if no attachments)\n"
-        "2. **Parser** — email + media → structured BugReport\n"
-        "3. **Embeddings** — top-5 similar bugs from 300 historical FLIPPI bugs\n"
-        "4. **Dedup** — duplicate decision (≥ 0.80 confidence)\n"
-        "5. **Triage** — priority P0/P1/P2/P3 + justification"
-    )
-
 
 # ── Header ──────────────────────────────────────────────────────────────────
 
-st.title("🐞 SLAP Bug Triage")
+st.title("SLAP Bug Triage")
 st.caption("Paste the report. Attach screenshots if you have them. The agent drafts the ticket.")
 
 
@@ -244,7 +237,12 @@ sample_names  = ["(paste your own)"] + [p.name for p in samples]
 col_pick, col_pipeline = st.columns([2, 2])
 
 with col_pick:
-    pick = st.selectbox("Pre-fill from a sample", sample_names, index=0)
+    pick = st.selectbox(
+        "Pre-fill from a sample",
+        sample_names,
+        index=0,
+        key=f"pick_{st.session_state.input_version}",
+    )
     default_text = ""
     if pick != "(paste your own)":
         default_text = (DATA_DIR / pick).read_text(encoding="utf-8")
