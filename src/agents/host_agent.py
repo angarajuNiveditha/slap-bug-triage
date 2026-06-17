@@ -62,53 +62,87 @@ class HostResult:
 
 # ─── Quality checks ────────────────────────────────────────────────────────
 
-VAGUE_TEXT_THRESHOLD = 350   # chars of raw email body, lower = considered vague
-_PLACEHOLDER_VALUES  = {"", "not provided.", "not provided", "unknown", "none", "n/a"}
+VAGUE_TEXT_THRESHOLD = 300   # chars of raw email body — anything shorter is auto-vague
+
+# Required sections in a properly-formatted bug report email, mapped to
+# the case-insensitive substring patterns we'll accept as evidence of
+# that section being present. We check the RAW email text (not parsed
+# fields) because the parser sometimes infers values when the user
+# omitted the section entirely.
+REQUIRED_SECTION_PATTERNS = [
+    ("Steps to Reproduce", ["steps to reproduce", "reproduction steps", "repro steps", "\nsteps:"]),
+    ("Expected Result",    ["expected:", "expected result", "expected behavi"]),
+    ("Actual Result",      ["actual:", "actual result", "actual behavi"]),
+    ("Impact",             ["impact:", "user impact", "business impact"]),
+    ("Reproducibility",    ["reproducibility:", "repro rate", "repro:", "frequency:"]),
+    ("Environment",        ["environment:", "platform:", "app version:", "device:", "os version"]),
+]
+
+# Threshold: if at least this many required sections are missing, we ask
+# the reporter to refile. The default tolerance is 2 — letting an
+# otherwise-good email slip a single section by accident — while still
+# catching reports that obviously skipped the format.
+MAX_MISSING_SECTIONS = 2
 
 
-def _is_placeholder(value: str) -> bool:
-    return (value or "").strip().lower() in _PLACEHOLDER_VALUES
+def _section_present(raw_lower: str, patterns: list) -> bool:
+    return any(p in raw_lower for p in patterns)
 
 
 def detect_quality_issues(bug: BugReport, media: "MediaResult") -> list:
     """
     Return a list of {type, severity, message, suggested_action} dicts when
-    the report's quality is too low for a confident triage call:
+    the report's quality is too low for a confident triage call.
 
-    - vague_report:        short text + missing key fields (steps / impact / actual)
-    - media_contradicts_text: any image whose findings disagree with the email body
+    Two kinds of issues:
 
-    These get folded into triage_notes.quality_issues and surfaced in the UI
-    so the reporter can refile with the missing detail before the draft is
-    treated as authoritative.
+    - vague_report — the raw email is missing required section headers
+      (Impact, Reproducibility, Environment, etc.). We check the raw text
+      rather than parsed fields because Claude will sometimes infer values
+      for missing sections; the format check has to be on the raw input.
+
+    - media_contradicts_text — any image whose media-agent findings
+      disagree with the email body.
+
+    These get folded into triage_notes.quality_issues and surfaced in the
+    UI so the reporter refiles with the missing detail before the draft
+    is treated as authoritative.
     """
     issues: list = []
 
-    # 1. Vague report — multiple structural signals must all be weak before we flag
-    missing = []
-    if len((bug.raw_text or "").strip()) < VAGUE_TEXT_THRESHOLD:
-        missing.append("the report body is under ~350 characters")
-    if not bug.steps_to_reproduce:
-        missing.append("no steps to reproduce were provided")
-    if _is_placeholder(bug.impact):
-        missing.append("no impact statement was provided")
-    if _is_placeholder(bug.actual_result):
-        missing.append("no actual result was described")
-    if _is_placeholder(bug.expected_result):
-        missing.append("no expected result was described")
-    if _is_placeholder(bug.platform):
-        missing.append("no platform was specified")
-    if _is_placeholder(bug.reproducibility):
-        missing.append("reproducibility was not stated")
+    raw       = (bug.raw_text or "").strip()
+    raw_lower = raw.lower()
+    missing   = []
 
-    if len(missing) >= 2:
+    # Very short reports are auto-vague (don't even check sections — there
+    # isn't enough text to evaluate).
+    if len(raw) < VAGUE_TEXT_THRESHOLD:
+        missing.append(f"the report body is under ~{VAGUE_TEXT_THRESHOLD} characters")
+
+    # Format compliance: each required section must be present in the raw email.
+    for label, patterns in REQUIRED_SECTION_PATTERNS:
+        if not _section_present(raw_lower, patterns):
+            missing.append(f"no '{label}' section in the email")
+
+    # If the parser failed to extract any reproduction steps (even though the
+    # email may have had a 'Steps' header), count it as a missing detail.
+    if bug.steps_to_reproduce == []:
+        already_flagged_steps = any("Steps to Reproduce" in m for m in missing)
+        if not already_flagged_steps:
+            missing.append("no reproduction steps could be extracted")
+
+    if len(missing) >= MAX_MISSING_SECTIONS:
         issues.append({
             "type":             "vague_report",
             "severity":         "warning",
-            "message":          "The report is missing details needed for confident triage: " + "; ".join(missing) + ".",
+            "message": (
+                "The report is not following the expected format: "
+                + "; ".join(missing) + "."
+            ),
             "suggested_action": (
-                "Please refile this bug with clear steps to reproduce, expected vs actual "
-                "behaviour, the platform/version, and a user-impact statement."
+                "Please refile with explicit sections for Steps to Reproduce, "
+                "Expected vs Actual, Impact, Reproducibility, and Environment "
+                "(platform/version/device). All five are required for confident triage."
             ),
         })
 
