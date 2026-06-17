@@ -99,7 +99,7 @@ st.markdown(
       .slap-hero-title {
           font-size: 32px; font-weight: 700; letter-spacing: -0.6px;
           color: #18181B; line-height: 1.15; margin: 0;
-          display: flex; align-items: center; gap: 10px;
+          display: flex; align-items: center; gap: 22px;
       }
       .slap-hero-bug {
           display: inline-flex; align-items: center; justify-content: center;
@@ -160,14 +160,14 @@ st.markdown(
 
       /* ── Section labels (subtler, no boxes) ───────────────────────── */
       .section-label {
-          font-size: 11px; font-weight: 700; letter-spacing: 1.2px;
+          font-size: 15px; font-weight: 700; letter-spacing: 1.4px;
           text-transform: uppercase; color: #BE185D;
-          margin: 8px 0 14px 0;
-          display: flex; align-items: center; gap: 10px;
+          margin: 14px 0 18px 0;
+          display: flex; align-items: center; gap: 12px;
       }
       .section-label::before {
           content: "";
-          width: 28px; height: 3px; border-radius: 3px;
+          width: 36px; height: 4px; border-radius: 3px;
           background: linear-gradient(90deg, #E11D74 0%, #F9A8D4 100%);
       }
 
@@ -202,21 +202,39 @@ st.markdown(
       .mtile.prio-P3 { border-bottom-color: #93C5FD; }
 
       /* ── Buttons ─────────────────────────────────────────────────── */
-      .stButton button[kind="primary"] {
-          background: linear-gradient(135deg, #E11D74 0%, #BE185D 100%);
-          border: 0; border-radius: 14px;
-          padding: 14px 28px; font-weight: 600; letter-spacing: 0.2px; color: white;
-          font-size: 14px;
-          box-shadow: 0 8px 24px -8px rgba(225,29,116,0.45);
-          transition: transform 0.12s, box-shadow 0.12s, filter 0.12s;
+      /* Streamlit 1.58 wraps primary buttons in several DOM shapes
+         depending on context (`kind="primary"`, data-testid variants,
+         emotion class names). Covering all of them so the pink hits. */
+      .stButton button[kind="primary"],
+      .stButton button[data-testid="stBaseButton-primary"],
+      [data-testid="stButton"] button[kind="primary"],
+      button[kind="primary"] {
+          background: linear-gradient(135deg, #E11D74 0%, #BE185D 100%) !important;
+          background-color: #E11D74 !important;
+          border: 0 !important;
+          border-radius: 14px !important;
+          padding: 14px 28px !important;
+          font-weight: 600 !important;
+          letter-spacing: 0.2px !important;
+          color: #FFFFFF !important;
+          font-size: 14px !important;
+          box-shadow: 0 8px 24px -8px rgba(225,29,116,0.45) !important;
+          transition: transform 0.12s, box-shadow 0.12s, filter 0.12s !important;
       }
-      .stButton button[kind="primary"]:hover:not(:disabled) {
-          filter: brightness(1.05);
-          transform: translateY(-1px);
-          box-shadow: 0 14px 30px -10px rgba(225,29,116,0.60);
+      .stButton button[kind="primary"]:hover:not(:disabled),
+      .stButton button[data-testid="stBaseButton-primary"]:hover:not(:disabled),
+      button[kind="primary"]:hover:not(:disabled) {
+          filter: brightness(1.06) !important;
+          transform: translateY(-1px) !important;
+          box-shadow: 0 14px 30px -10px rgba(225,29,116,0.60) !important;
       }
-      .stButton button[kind="primary"]:disabled {
-          background: #F0EFEB; color: #A8A29E; box-shadow: none;
+      .stButton button[kind="primary"]:disabled,
+      button[kind="primary"]:disabled {
+          background: #F4D9E4 !important;
+          background-color: #F4D9E4 !important;
+          color: #B384A0 !important;
+          box-shadow: none !important;
+          opacity: 0.7 !important;
       }
       .stButton button[kind="secondary"] {
           background: white; border: 1px solid #E7E5E4; color: #18181B;
@@ -854,13 +872,13 @@ if triage_btn:
     # in a richer markdown table with clickable Jira links). The metric
     # tiles above already give the at-a-glance view.
 
-    tab_names = ["Triage notes", "Raw JSON"]
+    tab_names = ["Findings", "Raw JSON"]
     if use_multi_agent and media and media.findings:
         tab_names.insert(1, "Media findings")
     tabs = st.tabs(tab_names)
 
     # Tabs render in the order they appear in tab_names:
-    #   1. Triage notes  (always first — primary detail view)
+    #   1. Findings  (always first — primary detail view; was "Triage notes")
     #   2. Media findings  (only when multi-agent + attachments)
     #   3. Raw JSON
     idx = 0
