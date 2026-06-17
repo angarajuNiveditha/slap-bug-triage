@@ -763,10 +763,17 @@ if triage_btn:
         # in particular leaves ghost state on some builds.
         refile_key = f"refile_btn_v{st.session_state.input_version}"
         if st.button("Refile this bug", type="primary", key=refile_key):
+            # NB: never delete `input_version` itself — that's the counter
+            # we just bumped to force-new widget keys. The old code wiped
+            # it (it starts with "input_"), so the bump on the next line
+            # crashed silently and widget keys stayed identical, leaving
+            # the textarea text in place. Guard against that explicitly.
             for k in list(st.session_state.keys()):
+                if k == "input_version":
+                    continue
                 if k.startswith(("input_", "upload_", "pick_", "FormSubmitter")):
                     del st.session_state[k]
-            st.session_state.input_version += 1
+            st.session_state.input_version = st.session_state.get("input_version", 0) + 1
             st.rerun()
 
         st.stop()
