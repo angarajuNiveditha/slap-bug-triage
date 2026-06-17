@@ -193,32 +193,66 @@ class HostAgent:
         self.embeddings_engine.build_index(issues)
         self._indexed = True
 
-    def triage(self, raw_text: str, image_paths: Optional[list] = None) -> HostResult:
+    def triage(
+        self,
+        raw_text: str,
+        image_paths: Optional[list] = None,
+        on_step: Optional[callable] = None,
+    ) -> HostResult:
+        """
+        Run the full multi-agent pipeline on one bug.
+
+        `on_step`, if given, is invoked between sub-agent stages so callers
+        (the CLI or the Streamlit UI) can stream progress updates as work
+        actually happens. The callback receives (event_name, message) where
+        event_name is e.g. "media:start", "parser:done", "triage:done",
+        and message is a one-line human-readable label.
+        """
+        def emit(event: str, message: str = "") -> None:
+            if on_step:
+                try:
+                    on_step(event, message)
+                except Exception:
+                    pass     # never let UI errors break the pipeline
+
         # ── Step 1: media (only if attachments) ─────────────────────────
         image_paths = list(image_paths or [])
         if image_paths:
+            emit("media:start", f"Media sub-agent processing {len(image_paths)} attachment(s)…")
             print(f"  [host] media sub-agent processing {len(image_paths)} image(s)...")
             # Pass the email text so the media sub-agent can compare what
             # the reporter wrote with what the images actually show.
             media = process_attachments(image_paths, email_text=raw_text)
+            emit("media:done", f"Media analysed — {len(media.findings)} finding(s)")
         else:
+            emit("media:skipped", "No attachments — skipping media sub-agent")
             media = MediaResult(findings=[], combined_summary="")
 
         # ── Step 2: parser ──────────────────────────────────────────────
+        emit("parser:start", "Parser sub-agent — email → BugReport…")
         print("  [host] parser sub-agent...")
         bug = parse_bug_report(raw_text, media_summary=media.combined_summary or None)
+        emit("parser:done", f"Parsed title: {(bug.title or '')[:72]}")
 
         # ── Step 3: embeddings ──────────────────────────────────────────
         if not self._indexed:
             raise RuntimeError(
                 "HostAgent.build_index(issues) must be called before .triage()"
             )
+        emit("embeddings:start", "Embeddings sub-agent — ranking similar bugs across 300 historical tickets…")
         print("  [host] embeddings sub-agent (ranking similar bugs)...")
         emb = self.embeddings_engine.find_similar(bug)
+        emit("embeddings:done", f"{len(emb.top_matches)} similar bug(s) ranked")
 
         # ── Step 4: dedup ───────────────────────────────────────────────
+        emit("dedup:start", "Dedup sub-agent — deciding duplicate…")
         print("  [host] dedup sub-agent...")
         dup = decide_duplicate(bug, emb.top_matches)
+        emit(
+            "dedup:done",
+            f"Likely duplicate of {dup.duplicate_of} ({dup.duplicate_confidence:.0%})"
+            if dup.duplicate_of else "No duplicate detected"
+        )
 
         # ── Step 5: assemble SimilarityResult for downstream consumers ──
         matches_with_dup_flag: list[SimilarBug] = []
@@ -241,12 +275,16 @@ class HostAgent:
         )
 
         # ── Step 6: triage / severity ───────────────────────────────────
+        emit("triage:start", "Triage sub-agent — assigning priority…")
         print("  [host] triage sub-agent...")
         severity = score_severity(bug, similarity.top_matches)
+        emit("triage:done", f"Assigned {severity.priority} ({severity.severity})")
 
         # ── Step 7: build the Jira ticket draft ─────────────────────────
+        emit("build:start", "Building Jira ticket draft…")
         print("  [host] building ticket draft...")
         draft = build_ticket(bug, severity, similarity)
+        emit("build:done", "Ticket draft assembled")
 
         # ── Step 8: annotate triage_notes with the multi-agent extras ──
         draft.triage_notes["pipeline"] = "multi-agent (Astral)"

@@ -161,19 +161,29 @@ st.markdown(
       /* ── Section labels (subtler, no boxes) ───────────────────────── */
       .section-label {
           font-size: 11px; font-weight: 700; letter-spacing: 1.2px;
-          text-transform: uppercase; color: #A8A29E;
-          margin: 8px 0 12px 0;
+          text-transform: uppercase; color: #BE185D;
+          margin: 8px 0 14px 0;
           display: flex; align-items: center; gap: 10px;
       }
       .section-label::before {
-          content: ""; width: 20px; height: 2px; background: #E11D74; border-radius: 2px;
+          content: "";
+          width: 28px; height: 3px; border-radius: 3px;
+          background: linear-gradient(90deg, #E11D74 0%, #F9A8D4 100%);
       }
 
       /* ── Custom metric tiles ──────────────────────────────────────── */
-      .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin: 6px 0 22px 0; }
+      .metric-grid {
+          display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
+          margin: 6px 0 22px 0;
+          padding: 16px 18px;
+          border-radius: 16px;
+          background: linear-gradient(135deg, #FFF5F8 0%, #FFFFFF 60%);
+          border: 1px solid #FBE0EC;
+          box-shadow: 0 12px 30px -18px rgba(225,29,116,0.18);
+      }
       .mtile {
-          padding: 14px 4px;
-          border-bottom: 2px solid #F0EFEB;
+          padding: 12px 6px;
+          border-bottom: 2px solid #FBE0EC;
           transition: border-color 0.15s;
       }
       .mtile:hover { border-bottom-color: #E11D74; }
@@ -193,16 +203,17 @@ st.markdown(
 
       /* ── Buttons ─────────────────────────────────────────────────── */
       .stButton button[kind="primary"] {
-          background: #18181B; border: 0; border-radius: 14px;
+          background: linear-gradient(135deg, #E11D74 0%, #BE185D 100%);
+          border: 0; border-radius: 14px;
           padding: 14px 28px; font-weight: 600; letter-spacing: 0.2px; color: white;
           font-size: 14px;
-          box-shadow: 0 4px 18px -4px rgba(225,29,116,0.22);
-          transition: transform 0.12s, box-shadow 0.12s, background 0.12s;
+          box-shadow: 0 8px 24px -8px rgba(225,29,116,0.45);
+          transition: transform 0.12s, box-shadow 0.12s, filter 0.12s;
       }
       .stButton button[kind="primary"]:hover:not(:disabled) {
-          background: #E11D74;
+          filter: brightness(1.05);
           transform: translateY(-1px);
-          box-shadow: 0 12px 28px -8px rgba(225,29,116,0.50);
+          box-shadow: 0 14px 30px -10px rgba(225,29,116,0.60);
       }
       .stButton button[kind="primary"]:disabled {
           background: #F0EFEB; color: #A8A29E; box-shadow: none;
@@ -215,21 +226,21 @@ st.markdown(
       /* ── Inputs (minimal — no heavy borders) ──────────────────────── */
       .stTextArea textarea {
           border-radius: 14px !important;
-          border: 1px solid #F0EFEB !important;
+          border: 1px solid #FBE0EC !important;
           font-family: 'JetBrains Mono', monospace !important;
           font-size: 13px !important;
           background: #FFFFFF !important;
-          box-shadow: 0 1px 0 rgba(0,0,0,0.02) !important;
+          box-shadow: 0 4px 18px -10px rgba(225,29,116,0.18) !important;
           padding: 14px 16px !important;
       }
       .stTextArea textarea:focus {
           border-color: #E11D74 !important;
-          box-shadow: 0 0 0 4px rgba(225,29,116,0.10) !important;
+          box-shadow: 0 0 0 4px rgba(225,29,116,0.12), 0 6px 22px -10px rgba(225,29,116,0.28) !important;
       }
       [data-testid="stFileUploader"] section {
           border-radius: 14px;
-          border: 1px dashed #E7E5E4 !important;
-          background: #FAFAF7;
+          border: 1.5px dashed #FBCFE0 !important;
+          background: linear-gradient(135deg, #FFF1F5 0%, #FFFFFF 100%);
           padding: 8px 10px !important;
       }
       /* The default thumbnail in the uploader chip — keep small */
@@ -696,18 +707,19 @@ if triage_btn:
             if use_multi_agent:
                 image_paths = save_uploads_to_tmp(uploaded_files) if uploaded_files else []
 
-                if image_paths:
-                    st.write(f"**Step 1** — Media sub-agent processing {len(image_paths)} image(s)...")
-                else:
-                    st.write("**Step 1** — No attachments; skipping media sub-agent.")
+                # Stream live step updates as each sub-agent actually
+                # finishes, not all at once before host.triage() runs.
+                step_icons = {
+                    "start":   "▸",
+                    "done":    "✓",
+                    "skipped": "⊘",
+                }
+                def on_step(event: str, message: str) -> None:
+                    _, suffix = event.split(":", 1) if ":" in event else (event, event)
+                    icon = step_icons.get(suffix, "•")
+                    st.markdown(f"{icon} {message}")
 
-                st.write("**Step 2** — Parser sub-agent (email → BugReport)...")
-                st.write(f"**Step 3** — Embeddings sub-agent ranking similar bugs across {n_indexed} historical bugs...")
-                st.write("**Step 4** — Dedup sub-agent deciding duplicate...")
-                st.write("**Step 5** — Triage sub-agent assigning priority...")
-                st.write("**Step 6** — Building Jira ticket draft...")
-
-                result   = host.triage(raw_text, image_paths=image_paths)
+                result   = host.triage(raw_text, image_paths=image_paths, on_step=on_step)
                 bug      = result.bug
                 sim      = result.similarity
                 severity = result.severity
@@ -837,31 +849,24 @@ if triage_btn:
         st.markdown(f"🔗 Open duplicate: {jira_link(sim.duplicate_of)}")
 
     # ── Tabs ────────────────────────────────────────────────────────────────
+    # Summary tab dropped — its content (justification, scoring path, owner
+    # reason, similar bugs) is already in Triage notes (which renders them
+    # in a richer markdown table with clickable Jira links). The metric
+    # tiles above already give the at-a-glance view.
 
-    tab_names = ["Summary", "Triage notes", "Raw JSON"]
+    tab_names = ["Triage notes", "Raw JSON"]
     if use_multi_agent and media and media.findings:
         tab_names.insert(1, "Media findings")
     tabs = st.tabs(tab_names)
 
+    # Tabs render in the order they appear in tab_names:
+    #   1. Triage notes  (always first — primary detail view)
+    #   2. Media findings  (only when multi-agent + attachments)
+    #   3. Raw JSON
     idx = 0
+
     with tabs[idx]:
-        st.markdown(f"**Justification.** {severity.justification}")
-        st.markdown(f"**Scoring path.** `{severity.scoring_path}`")
-        if sim.suggested_owner:
-            st.markdown(f"**Owner reason.** {sim.owner_reason}")
-        st.markdown(f"**Pipeline.** `{draft.triage_notes.get('pipeline', pipeline_label)}`")
-
-        if media and media.combined_summary:
-            st.markdown(f"**Media summary.** {media.combined_summary}")
-
-        if sim.top_matches:
-            st.markdown("**Top similar bugs:**")
-            for m in sim.top_matches:
-                tag = "  🚩 _duplicate candidate_" if m.is_duplicate_candidate else ""
-                st.markdown(
-                    f"- {jira_link(m.key)} ({m.priority}, sim={m.similarity:.2f}) — "
-                    f"{m.summary}{tag}"
-                )
+        st.markdown(render_triage_md(draft.triage_notes))
     idx += 1
 
     if use_multi_agent and media and media.findings:
@@ -875,7 +880,6 @@ if triage_btn:
                 left, right = st.columns([1, 2])
                 with left:
                     if f.kind == "video":
-                        # Full player so the reviewer can scrub through the bug
                         if Path(f.image_path).exists():
                             st.video(f.image_path)
                         if f.duration_seconds:
@@ -928,10 +932,6 @@ if triage_btn:
 
                 st.divider()
         idx += 1
-
-    with tabs[idx]:
-        st.markdown(render_triage_md(draft.triage_notes))
-    idx += 1
 
     with tabs[idx]:
         triage_json = json.dumps(draft.triage_notes, indent=2, ensure_ascii=False)
