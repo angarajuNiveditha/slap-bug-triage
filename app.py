@@ -56,23 +56,25 @@ st.set_page_config(
 )
 
 # ── Theme: typography, colours, polish ─────────────────────────────────────
-# Palette: warm cream background, charcoal as the primary, deep teal as the
-# single accent (used sparingly on active states / hovers). No rose.
-# Deploy button is hidden server-side via .streamlit/config.toml; the CSS
-# below also nukes it for older Streamlit builds.
+# Pulled toward SLAP's own aesthetic: clean white background, large
+# headings, soft pink (#E11D74) accent that mimics the SLAP brand's
+# magenta star, minimal borders, generous breathing room.
 st.markdown(
     """
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
 
       /* Belt-and-suspenders Deploy hide (config.toml does the real work). */
       [data-testid="stDeployButton"], .stDeployButton,
       [data-testid="stAppDeployButton"], .stAppDeployButton,
       [class*="DeployButton"] { display: none !important; }
 
-      /* Page background — warm cream */
-      [data-testid="stAppViewContainer"] { background: #FBFAF7; }
-      [data-testid="stMain"] .block-container { padding-top: 1.0rem; max-width: 1240px; }
+      /* Page background — clean white, like SLAP's own home surface */
+      [data-testid="stAppViewContainer"] { background: #FFFFFF; }
+      [data-testid="stMain"] .block-container {
+          padding: 1.2rem 2rem 3rem 2rem;
+          max-width: 1480px;
+      }
 
       /* Typography */
       html, body, [class*="css"], .stMarkdown, .stTextArea, .stSelectbox, .stRadio {
@@ -81,178 +83,175 @@ st.markdown(
       }
       code, pre { font-family: 'JetBrains Mono', monospace !important; font-size: 12.5px !important; }
 
-      /* ── Hero ─────────────────────────────────────────────────────── */
+      /* ── Hero (no dark box; clean, SLAP-style) ─────────────────────── */
       .slap-hero {
-          background: linear-gradient(135deg, #18181B 0%, #27272A 100%);
-          color: white;
-          padding: 20px 26px;
-          border-radius: 12px;
-          margin: 4px 0 16px 0;
-          display: flex; align-items: center; gap: 16px;
-          position: relative; overflow: hidden;
-          box-shadow: 0 1px 0 rgba(0,0,0,0.04);
+          display: flex; align-items: flex-end; justify-content: space-between;
+          padding: 8px 4px 24px 4px;
+          border-bottom: 1px solid #F0EFEB;
+          margin-bottom: 28px;
       }
-      .slap-hero::after {
-          content: ""; position: absolute; right: -60px; top: -60px;
-          width: 220px; height: 220px; border-radius: 100%;
-          background: radial-gradient(circle, rgba(15,118,110,0.28) 0%, transparent 70%);
-          pointer-events: none;
+      .slap-hero-text { display: flex; flex-direction: column; gap: 4px; }
+      .slap-hero-title {
+          font-size: 32px; font-weight: 700; letter-spacing: -0.6px;
+          color: #18181B; line-height: 1.15; margin: 0;
+          display: flex; align-items: center; gap: 10px;
       }
-      .slap-hero-icon {
-          width: 46px; height: 46px;
-          background: rgba(15,118,110,0.20);
-          border: 1px solid rgba(15,118,110,0.40);
-          border-radius: 10px;
-          display: flex; align-items: center; justify-content: center;
-          flex-shrink: 0;
+      .slap-hero-title-star { color: #E11D74; font-size: 26px; }
+      .slap-hero-sub {
+          color: #78716C; font-size: 14px; line-height: 1.45;
+          max-width: 640px;
       }
-      .slap-hero-icon svg { width: 26px; height: 26px; color: #5EEAD4; }
-      .slap-hero-title { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: -0.2px; }
-      .slap-hero-sub   { margin-top: 2px; color: rgba(255,255,255,0.65); font-size: 12.5px; }
       .slap-hero-badge {
-          margin-left: auto; padding: 4px 10px; border-radius: 999px;
-          background: rgba(34, 197, 94, 0.14); color: #4ADE80;
-          font-size: 10.5px; font-weight: 600; letter-spacing: 0.5px;
-          border: 1px solid rgba(34, 197, 94, 0.30);
-          display: flex; align-items: center; gap: 6px;
+          padding: 5px 12px; border-radius: 999px;
+          background: rgba(34, 197, 94, 0.10); color: #16A34A;
+          font-size: 11px; font-weight: 600; letter-spacing: 0.4px;
+          border: 1px solid rgba(34, 197, 94, 0.25);
+          display: inline-flex; align-items: center; gap: 6px;
+          align-self: center;
       }
       .slap-hero-badge::before {
           content: ""; width: 6px; height: 6px; border-radius: 50%;
-          background: #4ADE80; box-shadow: 0 0 8px #4ADE80;
+          background: #22C55E; box-shadow: 0 0 8px rgba(34,197,94,0.6);
       }
 
-      /* ── Pipeline stepper ─────────────────────────────────────────── */
-      .pipeline-shell {
-          background: white; border: 1px solid #E7E5E4; border-radius: 12px;
-          padding: 14px 18px; margin-bottom: 18px;
+      /* ── Pipeline stepper (vertical, left rail) ───────────────────── */
+      .pipeline-rail {
+          display: flex; flex-direction: column; align-items: flex-start;
+          padding: 4px 0;
+          position: sticky; top: 1.2rem;
       }
-      .pipeline-title {
-          font-size: 10.5px; font-weight: 700; letter-spacing: 1.1px;
-          text-transform: uppercase; color: #78716C; margin-bottom: 10px;
+      .pipeline-rail-title {
+          font-size: 10.5px; font-weight: 700; letter-spacing: 1.4px;
+          text-transform: uppercase; color: #A8A29E; margin: 0 0 16px 4px;
       }
-      .pipeline-row { display: flex; align-items: stretch; gap: 6px; }
-      .pipe-node {
-          flex: 1; min-width: 0;
-          padding: 10px 12px; border-radius: 9px;
-          border: 1px solid #E7E5E4; background: #FBFAF7;
-          display: flex; flex-direction: column; gap: 3px;
-      }
-      .pipe-node-head { display: flex; align-items: center; gap: 7px; }
-      .pipe-node-icon {
-          width: 22px; height: 22px; border-radius: 6px;
-          background: #F0FDFA; color: #0F766E;
-          display: flex; align-items: center; justify-content: center;
-          font-size: 12px; font-weight: 700; flex-shrink: 0;
-      }
-      .pipe-node-name { font-size: 12.5px; font-weight: 600; color: #18181B; }
-      .pipe-node-desc { font-size: 10.5px; color: #78716C; line-height: 1.4; }
-      .pipe-edge {
-          flex-shrink: 0; align-self: center;
-          width: 10px; height: 2px; background: #D6D3D1;
+      .pipe-vnode {
+          display: flex; align-items: flex-start; gap: 12px;
           position: relative;
+          padding: 4px 0;
+          width: 100%;
       }
-      .pipe-edge::after {
-          content: ""; position: absolute; right: -1px; top: -3px;
-          border-left: 5px solid #D6D3D1;
-          border-top: 4px solid transparent;
-          border-bottom: 4px solid transparent;
+      .pipe-vnode-icon {
+          width: 32px; height: 32px; border-radius: 9px;
+          flex-shrink: 0;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 13px; font-weight: 700;
+          background: #FFF1F5; color: #E11D74;
+          border: 1px solid #FBCFE0;
+          z-index: 2;
       }
-      .pipe-endpoint {
-          padding: 10px 12px; border-radius: 9px;
-          background: #18181B; color: white;
-          display: flex; flex-direction: column; gap: 2px;
-          justify-content: center; min-width: 80px; flex-shrink: 0;
+      .pipe-vnode-icon.endpoint {
+          background: #18181B; color: #FCE7F0; border-color: #18181B;
       }
-      .pipe-endpoint-label { font-size: 9.5px; letter-spacing: 0.7px; text-transform: uppercase; color: rgba(255,255,255,0.55); }
-      .pipe-endpoint-value { font-size: 12px; font-weight: 600; }
+      .pipe-vnode-icon.endpoint.output { background: #E11D74; color: white; border-color: #E11D74; }
+      .pipe-vnode-text { flex: 1; padding-top: 4px; padding-bottom: 18px; }
+      .pipe-vnode-name { font-size: 13px; font-weight: 600; color: #18181B; line-height: 1.2; }
+      .pipe-vnode-desc { font-size: 11.5px; color: #78716C; line-height: 1.4; margin-top: 3px; }
+      /* Vertical connecting line — drawn from below the icon to the next node */
+      .pipe-vnode:not(:last-child)::before {
+          content: ""; position: absolute;
+          left: 15px; top: 36px; bottom: -4px;
+          width: 2px; background: #F0EFEB;
+          z-index: 1;
+      }
 
-      /* ── Section headers ─────────────────────────────────────────── */
+      /* ── Section labels (subtler, no boxes) ───────────────────────── */
       .section-label {
-          display: inline-flex; align-items: center; gap: 10px;
-          font-size: 10.5px; font-weight: 700; letter-spacing: 1.2px;
-          text-transform: uppercase; color: #78716C;
-          margin: 14px 0 8px 0;
+          font-size: 11px; font-weight: 700; letter-spacing: 1.2px;
+          text-transform: uppercase; color: #A8A29E;
+          margin: 8px 0 12px 0;
+          display: flex; align-items: center; gap: 10px;
       }
       .section-label::before {
-          content: ""; width: 22px; height: 2px; background: #0F766E; border-radius: 2px;
+          content: ""; width: 20px; height: 2px; background: #E11D74; border-radius: 2px;
       }
 
       /* ── Custom metric tiles ──────────────────────────────────────── */
-      .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 4px 0 16px 0; }
+      .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin: 6px 0 22px 0; }
       .mtile {
-          background: white;
-          border: 1px solid #E7E5E4;
-          border-radius: 11px;
-          padding: 13px 15px;
-          transition: transform 0.15s, box-shadow 0.15s;
+          padding: 14px 4px;
+          border-bottom: 2px solid #F0EFEB;
+          transition: border-color 0.15s;
       }
-      .mtile:hover { transform: translateY(-1px); box-shadow: 0 8px 20px -10px rgba(0,0,0,0.10); }
-      .mtile-label { font-size: 10px; font-weight: 700; letter-spacing: 1px;
-                     text-transform: uppercase; color: #78716C; margin-bottom: 7px; }
-      .mtile-value { font-size: 21px; font-weight: 700; color: #18181B; line-height: 1.1; }
-      .mtile-sub   { font-size: 11px; color: #78716C; margin-top: 3px; }
+      .mtile:hover { border-bottom-color: #E11D74; }
+      .mtile-label { font-size: 10.5px; font-weight: 700; letter-spacing: 1.1px;
+                     text-transform: uppercase; color: #A8A29E; margin-bottom: 8px; }
+      .mtile-value { font-size: 24px; font-weight: 700; color: #18181B; line-height: 1.1; letter-spacing: -0.3px; }
+      .mtile-sub   { font-size: 11.5px; color: #78716C; margin-top: 4px; }
 
-      .mtile.prio-P0 { background: #FEF2F2; border-color: #FCA5A5; }
       .mtile.prio-P0 .mtile-value { color: #B91C1C; }
-      .mtile.prio-P1 { background: #FFF7ED; border-color: #FDBA74; }
+      .mtile.prio-P0 { border-bottom-color: #FCA5A5; }
       .mtile.prio-P1 .mtile-value { color: #C2410C; }
-      .mtile.prio-P2 { background: #FFFBEB; border-color: #FCD34D; }
+      .mtile.prio-P1 { border-bottom-color: #FDBA74; }
       .mtile.prio-P2 .mtile-value { color: #B45309; }
-      .mtile.prio-P3 { background: #EFF6FF; border-color: #93C5FD; }
+      .mtile.prio-P2 { border-bottom-color: #FCD34D; }
       .mtile.prio-P3 .mtile-value { color: #1D4ED8; }
+      .mtile.prio-P3 { border-bottom-color: #93C5FD; }
 
       /* ── Buttons ─────────────────────────────────────────────────── */
       .stButton button[kind="primary"] {
-          background: #18181B; border: 0; border-radius: 10px;
-          padding: 11px 20px; font-weight: 600; letter-spacing: 0.2px; color: white;
-          box-shadow: 0 4px 12px -4px rgba(0,0,0,0.25);
+          background: #18181B; border: 0; border-radius: 14px;
+          padding: 14px 28px; font-weight: 600; letter-spacing: 0.2px; color: white;
+          font-size: 14px;
+          box-shadow: 0 4px 18px -4px rgba(225,29,116,0.22);
           transition: transform 0.12s, box-shadow 0.12s, background 0.12s;
       }
       .stButton button[kind="primary"]:hover:not(:disabled) {
-          background: #0F766E;
+          background: #E11D74;
           transform: translateY(-1px);
-          box-shadow: 0 8px 18px -6px rgba(15,118,110,0.45);
+          box-shadow: 0 12px 28px -8px rgba(225,29,116,0.50);
       }
       .stButton button[kind="primary"]:disabled {
-          background: #E7E5E4; color: #A8A29E; box-shadow: none;
+          background: #F0EFEB; color: #A8A29E; box-shadow: none;
       }
       .stButton button[kind="secondary"] {
           background: white; border: 1px solid #E7E5E4; color: #18181B;
           border-radius: 10px; font-weight: 500;
       }
 
-      /* ── Inputs ───────────────────────────────────────────────────── */
+      /* ── Inputs (minimal — no heavy borders) ──────────────────────── */
       .stTextArea textarea {
-          border-radius: 11px !important;
-          border: 1px solid #E7E5E4 !important;
+          border-radius: 14px !important;
+          border: 1px solid #F0EFEB !important;
           font-family: 'JetBrains Mono', monospace !important;
-          font-size: 12.5px !important;
-          background: white !important;
+          font-size: 13px !important;
+          background: #FFFFFF !important;
+          box-shadow: 0 1px 0 rgba(0,0,0,0.02) !important;
+          padding: 14px 16px !important;
       }
       .stTextArea textarea:focus {
-          border-color: #0F766E !important;
-          box-shadow: 0 0 0 3px rgba(15,118,110,0.12) !important;
+          border-color: #E11D74 !important;
+          box-shadow: 0 0 0 4px rgba(225,29,116,0.10) !important;
       }
       [data-testid="stFileUploader"] section {
-          border-radius: 11px;
-          border: 1px dashed #D6D3D1 !important;
-          background: white;
+          border-radius: 14px;
+          border: 1px dashed #E7E5E4 !important;
+          background: #FAFAF7;
+          padding: 8px 10px !important;
       }
-      /* Constrain inline image previews — Streamlit makes them huge by default. */
-      [data-testid="stFileUploaderFile"] img { max-width: 76px !important; max-height: 76px !important; border-radius: 6px; }
+      /* The default thumbnail in the uploader chip — keep small */
+      [data-testid="stFileUploaderFile"] img { max-width: 64px !important; max-height: 64px !important; border-radius: 6px; }
 
-      /* ── Tabs ────────────────────────────────────────────────────── */
+      /* Radio (pipeline picker) — slightly larger label */
+      .stRadio label { font-size: 13.5px !important; }
+
+      /* Selectbox — softer borders */
+      div[data-baseweb="select"] > div {
+          border-radius: 12px !important;
+          border-color: #F0EFEB !important;
+      }
+
+      /* ── Tabs (underline-on-active, no boxes) ─────────────────────── */
       .stTabs [data-baseweb="tab-list"] {
-          gap: 2px; border-bottom: 1px solid #E7E5E4;
+          gap: 4px; border-bottom: 1px solid #F0EFEB;
           background: transparent;
       }
       .stTabs [data-baseweb="tab"] {
-          font-weight: 600; font-size: 13px;
-          padding: 10px 18px; color: #78716C;
+          font-weight: 600; font-size: 13.5px;
+          padding: 12px 20px; color: #78716C;
       }
       .stTabs [aria-selected="true"] {
-          color: #0F766E !important;
-          border-bottom: 2px solid #0F766E !important;
+          color: #E11D74 !important;
+          border-bottom: 2px solid #E11D74 !important;
       }
 
       /* ── Quality issues ──────────────────────────────────────────── */
@@ -286,31 +285,33 @@ st.markdown(
       .quality-card-action { color: #57534E; font-size: 12.5px; line-height: 1.55; margin-top: 6px;
                              padding-top: 7px; border-top: 1px dashed #E7E5E4; }
 
-      /* ── Attachment thumb strip (custom) ─────────────────────────── */
-      .thumb-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-      .thumb { width: 78px; height: 78px; border-radius: 7px; border: 1px solid #E7E5E4;
-               object-fit: cover; background: #FBFAF7; }
-      .thumb-cap { font-size: 10.5px; color: #78716C; text-align: center; margin-top: 3px;
-                   max-width: 78px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      /* ── Attachment thumb strip — BIGGER previews ──────────────────── */
+      .thumb-strip { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; }
+      .thumb {
+          width: 180px; max-height: 320px;
+          border-radius: 14px; border: 1px solid #F0EFEB;
+          object-fit: contain; background: #FAFAF7;
+          box-shadow: 0 4px 16px -8px rgba(0,0,0,0.08);
+      }
+      .thumb-cap {
+          font-size: 11.5px; color: #78716C; text-align: center; margin-top: 6px;
+          max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
       .thumb-wrap { display: flex; flex-direction: column; align-items: center; }
 
       /* ── Misc ────────────────────────────────────────────────────── */
       .stCaption, .caption { color: #78716C !important; }
-      hr { border-color: #E7E5E4 !important; margin: 14px 0 !important; }
+      hr { border-color: #F0EFEB !important; margin: 18px 0 !important; }
 
-      /* Sidekick info card (right-column filler so layout balances) */
-      .help-card {
-          background: white; border: 1px solid #E7E5E4; border-radius: 11px;
-          padding: 12px 15px; margin-top: 10px;
+      /* Quality issue cards — minimal borders, more breathing */
+      .quality-banner {
+          background: #FEF2F2;
+          border-left: 3px solid #DC2626;
+          border-radius: 0 14px 14px 0;
+          padding: 16px 22px;
+          margin: 6px 0 18px 0;
       }
-      .help-card h6 { margin: 0 0 6px 0; font-size: 10.5px; font-weight: 700; letter-spacing: 1px;
-                      text-transform: uppercase; color: #78716C; }
-      .help-card-row { font-size: 12px; color: #57534E; line-height: 1.5; margin: 3px 0;
-                       display: flex; gap: 6px; align-items: baseline; }
-      .help-card-row::before {
-          content: ""; width: 4px; height: 4px; border-radius: 50%; background: #0F766E;
-          flex-shrink: 0; margin-top: 7px;
-      }
+      .quality-card { padding: 14px 18px; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -475,31 +476,19 @@ with st.sidebar:
     st.markdown("**No tickets are filed automatically.** A human reviews and files.")
 
 
-# ── Hero ───────────────────────────────────────────────────────────────────
+# ── Hero (clean, SLAP-style) ───────────────────────────────────────────────
 
 st.markdown(
     """
     <div class="slap-hero">
-      <div class="slap-hero-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-             stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
-          <ellipse cx="12" cy="13.5" rx="5" ry="6.5" fill="currentColor" stroke="currentColor"/>
-          <line x1="12" y1="7"  x2="12" y2="20" stroke="#0F172A" stroke-width="1.2"/>
-          <circle cx="9.7" cy="11" r="0.9" fill="#0F172A" stroke="none"/>
-          <circle cx="14.3" cy="11" r="0.9" fill="#0F172A" stroke="none"/>
-          <path d="M11 6 L9 3.5"  />
-          <path d="M13 6 L15 3.5" />
-          <path d="M7 12 L4 10"   />
-          <path d="M7 15 L4 17"   />
-          <path d="M17 12 L20 10" />
-          <path d="M17 15 L20 17" />
-          <path d="M10 20 L9 23"  />
-          <path d="M14 20 L15 23" />
-        </svg>
-      </div>
-      <div>
-        <div class="slap-hero-title">SLAP Bug Triage</div>
-        <div class="slap-hero-sub">Drafts a Jira ticket from a bug-report email plus screenshots. Read-only Jira; nothing is auto-filed.</div>
+      <div class="slap-hero-text">
+        <h1 class="slap-hero-title">
+          Slap<span class="slap-hero-title-star">✦</span> Bug Triage
+        </h1>
+        <div class="slap-hero-sub">
+          Drafts a Jira ticket from a bug-report email plus screenshots or videos.
+          Read-only Jira — nothing is auto-filed; a human reviews every draft.
+        </div>
       </div>
       <div class="slap-hero-badge">Live</div>
     </div>
@@ -508,99 +497,118 @@ st.markdown(
 )
 
 
-# ── Pipeline architecture (always visible) ─────────────────────────────────
+# ── Body: left rail (pipeline) + main column (input) ───────────────────────
 
-st.markdown(
-    """
-    <div class="pipeline-shell">
-      <div class="pipeline-title">Multi-agent pipeline · Astral coordinates 5 sub-agents</div>
-      <div class="pipeline-row">
-        <div class="pipe-endpoint">
-          <div class="pipe-endpoint-label">Input</div>
-          <div class="pipe-endpoint-value">Email + Images</div>
-        </div>
-        <div class="pipe-edge"></div>
-        <div class="pipe-node">
-          <div class="pipe-node-head">
-            <div class="pipe-node-icon">M</div>
-            <div class="pipe-node-name">Media</div>
-          </div>
-          <div class="pipe-node-desc">Reads screenshots, identifies the SLAP screen, extracts visible bug evidence.</div>
-        </div>
-        <div class="pipe-edge"></div>
-        <div class="pipe-node">
-          <div class="pipe-node-head">
-            <div class="pipe-node-icon">P</div>
-            <div class="pipe-node-name">Parser</div>
-          </div>
-          <div class="pipe-node-desc">Email + media findings &rarr; structured BugReport (title, platform, steps...).</div>
-        </div>
-        <div class="pipe-edge"></div>
-        <div class="pipe-node">
-          <div class="pipe-node-head">
-            <div class="pipe-node-icon">E</div>
-            <div class="pipe-node-name">Embeddings</div>
-          </div>
-          <div class="pipe-node-desc">Ranks the top-5 most similar bugs from 300 historical FLIPPI tickets.</div>
-        </div>
-        <div class="pipe-edge"></div>
-        <div class="pipe-node">
-          <div class="pipe-node-head">
-            <div class="pipe-node-icon">D</div>
-            <div class="pipe-node-name">Dedup</div>
-          </div>
-          <div class="pipe-node-desc">Decides if any candidate is a duplicate (confidence &ge; 0.80).</div>
-        </div>
-        <div class="pipe-edge"></div>
-        <div class="pipe-node">
-          <div class="pipe-node-head">
-            <div class="pipe-node-icon">T</div>
-            <div class="pipe-node-name">Triage</div>
-          </div>
-          <div class="pipe-node-desc">Assigns priority P0-P3 with a justification grounded in similar bugs.</div>
-        </div>
-        <div class="pipe-edge"></div>
-        <div class="pipe-endpoint">
-          <div class="pipe-endpoint-label">Output</div>
-          <div class="pipe-endpoint-value">Jira draft (ADF)</div>
-        </div>
-      </div>
+col_rail, col_main = st.columns([1, 3], gap="large")
+
+PIPELINE_RAIL_HTML = """
+<div class="pipeline-rail">
+  <div class="pipeline-rail-title">Astral · multi-agent pipeline</div>
+
+  <div class="pipe-vnode">
+    <div class="pipe-vnode-icon endpoint">in</div>
+    <div class="pipe-vnode-text">
+      <div class="pipe-vnode-name">Input</div>
+      <div class="pipe-vnode-desc">Email + screenshots / videos</div>
     </div>
-    """,
-    unsafe_allow_html=True,
-)
+  </div>
 
+  <div class="pipe-vnode">
+    <div class="pipe-vnode-icon">M</div>
+    <div class="pipe-vnode-text">
+      <div class="pipe-vnode-name">Media</div>
+      <div class="pipe-vnode-desc">Reads attachments, identifies the SLAP screen, extracts visible bug evidence.</div>
+    </div>
+  </div>
 
-# ── Input ───────────────────────────────────────────────────────────────────
+  <div class="pipe-vnode">
+    <div class="pipe-vnode-icon">P</div>
+    <div class="pipe-vnode-text">
+      <div class="pipe-vnode-name">Parser</div>
+      <div class="pipe-vnode-desc">Turns email + media findings into a structured BugReport.</div>
+    </div>
+  </div>
 
-st.markdown('<div class="section-label">Step 1 · Bug report</div>', unsafe_allow_html=True)
+  <div class="pipe-vnode">
+    <div class="pipe-vnode-icon">E</div>
+    <div class="pipe-vnode-text">
+      <div class="pipe-vnode-name">Embeddings</div>
+      <div class="pipe-vnode-desc">Ranks the top-5 most similar bugs from 300 historical FLIPPI tickets.</div>
+    </div>
+  </div>
 
+  <div class="pipe-vnode">
+    <div class="pipe-vnode-icon">D</div>
+    <div class="pipe-vnode-text">
+      <div class="pipe-vnode-name">Dedup</div>
+      <div class="pipe-vnode-desc">Duplicate decision over the top-5 (≥ 0.80 confidence).</div>
+    </div>
+  </div>
+
+  <div class="pipe-vnode">
+    <div class="pipe-vnode-icon">T</div>
+    <div class="pipe-vnode-text">
+      <div class="pipe-vnode-name">Triage</div>
+      <div class="pipe-vnode-desc">Assigns priority P0-P3 with a plain-English justification.</div>
+    </div>
+  </div>
+
+  <div class="pipe-vnode">
+    <div class="pipe-vnode-icon endpoint output">out</div>
+    <div class="pipe-vnode-text">
+      <div class="pipe-vnode-name">Output</div>
+      <div class="pipe-vnode-desc">Jira ADF draft + triage_notes JSON.</div>
+    </div>
+  </div>
+</div>
+"""
+
+with col_rail:
+    st.markdown(PIPELINE_RAIL_HTML, unsafe_allow_html=True)
+
+# Main column — the right-hand side of the rail. Everything from Step 1
+# through the Triage button lives in here.
 samples       = sorted(DATA_DIR.glob("*.txt")) if DATA_DIR.exists() else []
 sample_names  = ["(paste your own)"] + [p.name for p in samples]
 
-col_input, col_aside = st.columns([3, 2], gap="large")
+with col_main:
+    st.markdown('<div class="section-label">Step 1 · Bug report</div>', unsafe_allow_html=True)
 
-with col_aside:
-    pick = st.selectbox(
-        "Pre-fill from a sample",
-        sample_names,
-        index=0,
-        key=f"pick_{st.session_state.input_version}",
+    # Compact top-row controls: sample picker + pipeline radio
+    ctrl_pick, ctrl_pipe = st.columns([1, 1])
+    with ctrl_pick:
+        pick = st.selectbox(
+            "Pre-fill from a sample",
+            sample_names,
+            index=0,
+            key=f"pick_{st.session_state.input_version}",
+        )
+        default_text = ""
+        if pick != "(paste your own)":
+            default_text = (DATA_DIR / pick).read_text(encoding="utf-8")
+
+    with ctrl_pipe:
+        pipeline_choice = st.radio(
+            "Pipeline",
+            ["Multi-agent (semantic, accepts images)", "Rule-based (instant, text-only)"],
+            index=0,
+            help=(
+                "Multi-agent reads images and reasons semantically (~90–150 s). "
+                "Rule-based is instant but ignores attachments."
+            ),
+        )
+
+    # Textarea — full width of col_main
+    raw_text = st.text_area(
+        "Bug report email",
+        value=default_text,
+        height=300,
+        placeholder="From: someone@flipkart.com\nSubject: [URGENT] ...\n\nDescribe the bug here...",
+        key=f"input_{pick}_{st.session_state.input_version}",
+        label_visibility="collapsed",
     )
-    default_text = ""
-    if pick != "(paste your own)":
-        default_text = (DATA_DIR / pick).read_text(encoding="utf-8")
 
-    pipeline_choice = st.radio(
-        "Pipeline",
-        ["Multi-agent (semantic, accepts images)", "Rule-based (instant, text-only)"],
-        index=0,
-        help=(
-            "Multi-agent reads images and reasons semantically (~90–150 s). "
-            "Rule-based is instant but ignores attachments."
-        ),
-    )
-
+    # Attachments — full width, with LARGER previews
     uploaded_files = st.file_uploader(
         "Attach screenshots or videos (multi-agent only)",
         type=["png", "jpg", "jpeg", "webp", "gif",
@@ -642,39 +650,13 @@ with col_aside:
     if uploaded_files and pipeline_choice.startswith("Rule-based"):
         st.caption("⚠ Rule-based ignores attachments. Switch to multi-agent to use them.")
 
-    # Sidekick help-card fills the right column so the layout balances
-    # against the tall textarea on the left.
-    st.markdown(
-        """
-        <div class="help-card">
-          <h6>What you'll get</h6>
-          <div class="help-card-row">Priority (P0–P3) with a plain-English justification</div>
-          <div class="help-card-row">Team routing across BE_Flippi, BE_Labs, DS, UI, Immersive</div>
-          <div class="help-card-row">Suggested owner from the most-similar past bugs</div>
-          <div class="help-card-row">Duplicate flag with confidence (≥ 0.80)</div>
-          <div class="help-card-row">Jira ADF draft, ready to paste — never auto-filed</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    # Triage button — full width of col_main
+    triage_btn = st.button(
+        "Triage this bug",
+        type="primary",
+        disabled=not raw_text.strip(),
+        use_container_width=True,
     )
-
-with col_input:
-    raw_text = st.text_area(
-        "Bug report email",
-        value=default_text,
-        height=420,
-        placeholder="From: someone@flipkart.com\nSubject: [URGENT] ...\n\nDescribe the bug here...",
-        key=f"input_{pick}_{st.session_state.input_version}",
-        label_visibility="collapsed",
-    )
-
-# Full-width Triage button below both columns
-triage_btn = st.button(
-    "Triage this bug",
-    type="primary",
-    disabled=not raw_text.strip(),
-    use_container_width=True,
-)
 
 
 # ── Pipeline run ────────────────────────────────────────────────────────────
