@@ -36,8 +36,8 @@ from src.agent_scorer     import score_severity   as rb_score
 from src.tfidf_similarity import SimilarityEngine as RuleEngine
 
 # Multi-agent pipeline (Claude Code headless, supports media)
-from src.agents.host_agent      import HostAgent
-from src.agents.subagent_media  import IMAGE_EXTENSIONS
+from src.agents.host_agent      import HostAgent, detect_quality_issues
+from src.agents.subagent_media  import IMAGE_EXTENSIONS, MediaResult
 
 JIRA_BASE_URL = os.environ.get("JIRA_BASE_URL", "https://flipkart.atlassian.net")
 DATA_DIR      = Path(__file__).parent / "data"
@@ -50,6 +50,11 @@ st.set_page_config(
     page_icon="🐞",
     layout="wide",
 )
+
+# Bump this counter (via the "Refile" button) to force-reset the input
+# widgets when the user wants to refile after a quality warning.
+if "input_version" not in st.session_state:
+    st.session_state.input_version = 0
 
 
 # ── Cached resources ────────────────────────────────────────────────────────
@@ -113,6 +118,20 @@ def render_triage_md(triage: dict) -> str:
     ]
     if justification:
         lines += ["### Severity Justification", "", f"> {justification}", ""]
+
+    qissues = triage.get("quality_issues") or []
+    if qissues:
+        lines += ["### ⚠ Quality Issues — Refile Recommended", ""]
+        for q in qissues:
+            kind = q.get("type", "issue")
+            lines += [
+                f"**{kind}**",
+                "",
+                f"{q.get('message','')}",
+                "",
+                f"_Suggested action:_ {q.get('suggested_action','')}",
+                "",
+            ]
 
     findings = triage.get("media_findings") or []
     if findings:
@@ -247,7 +266,7 @@ raw_text = st.text_area(
     value=default_text,
     height=280,
     placeholder="From: someone@flipkart.com\nSubject: [URGENT] ...\n\nDescribe the bug here...",
-    key=f"input_{pick}",
+    key=f"input_{pick}_{st.session_state.input_version}",
 )
 
 uploaded_files = st.file_uploader(
@@ -255,6 +274,7 @@ uploaded_files = st.file_uploader(
     type=["png", "jpg", "jpeg", "webp", "gif"],
     accept_multiple_files=True,
     help="Images are sent to the media sub-agent, which identifies the SLAP screen and extracts visible bug evidence.",
+    key=f"upload_{st.session_state.input_version}",
 )
 
 if uploaded_files:
@@ -321,6 +341,11 @@ if triage_btn:
                 st.write("**Step 4** — Building Jira ticket draft...")
                 draft = build_ticket(bug, severity, sim)
                 media = None
+                # Rule-based path doesn't run the host agent — add the
+                # quality check inline so the same UI warnings show up.
+                q = detect_quality_issues(bug, MediaResult(findings=[], combined_summary=""))
+                if q:
+                    draft.triage_notes["quality_issues"] = q
 
             status.update(label="Triage complete", state="complete", expanded=False)
         except Exception as e:
@@ -331,6 +356,43 @@ if triage_btn:
     # ── Headline ────────────────────────────────────────────────────────────
 
     st.subheader("2. Result")
+
+    # ── Quality warnings (vague report / image-vs-text contradiction) ──────
+    quality_issues = draft.triage_notes.get("quality_issues") or []
+    if quality_issues:
+        st.error(
+            "⚠ **This bug cannot be triaged confidently.** "
+            "The report is missing critical details, or the attached image "
+            "contradicts the text. Please refile with the corrections below."
+        )
+
+        for q in quality_issues:
+            kind = q.get("type", "issue")
+            label = {
+                "vague_report":            "📝 Vague report",
+                "media_contradicts_text":  "🖼 Image ⇄ email mismatch",
+            }.get(kind, kind)
+
+            with st.container(border=True):
+                st.markdown(f"**{label}**")
+                st.markdown(q.get("message", ""))
+                action = q.get("suggested_action")
+                if action:
+                    st.markdown(f"_What to do:_ {action}")
+
+        bc1, bc2 = st.columns([1, 5])
+        with bc1:
+            if st.button("📝 Refile this bug", type="primary", key="refile_btn"):
+                st.session_state.input_version += 1
+                st.rerun()
+        with bc2:
+            st.caption(
+                "Refile clears the form so you can paste a corrected report. "
+                "The tentative draft below is still shown for context — review it "
+                "to see what the agent inferred from the inadequate input."
+            )
+
+        st.divider()
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Priority", severity.priority, severity.severity)
