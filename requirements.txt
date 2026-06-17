@@ -5,3 +5,4 @@ numpy>=1.26.0
 python-dotenv>=1.0.0
 scikit-learn>=1.9.0
 streamlit>=1.32.0
+imageio-ffmpeg>=0.4.9         # video keyframe extraction for subagent_media

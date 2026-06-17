@@ -38,7 +38,10 @@ from src.tfidf_similarity import SimilarityEngine as RuleEngine
 
 # Multi-agent pipeline (Claude Code headless, supports media)
 from src.agents.host_agent      import HostAgent, detect_quality_issues
-from src.agents.subagent_media  import IMAGE_EXTENSIONS, MediaResult
+from src.agents.subagent_media  import (
+    IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, MEDIA_EXTENSIONS,
+    MAX_VIDEO_DURATION_SECONDS, MediaResult,
+)
 
 JIRA_BASE_URL = os.environ.get("JIRA_BASE_URL", "https://flipkart.atlassian.net")
 DATA_DIR      = Path(__file__).parent / "data"
@@ -452,7 +455,7 @@ def save_uploads_to_tmp(uploaded_files) -> list:
     saved = []
     for f in uploaded_files:
         ext = Path(f.name).suffix.lower()
-        if ext not in IMAGE_EXTENSIONS:
+        if ext not in MEDIA_EXTENSIONS:
             continue
         path = tmp_dir / f.name
         path.write_bytes(f.getvalue())
@@ -599,27 +602,42 @@ with col_aside:
     )
 
     uploaded_files = st.file_uploader(
-        "Attach screenshots (multi-agent only)",
-        type=["png", "jpg", "jpeg", "webp", "gif"],
+        "Attach screenshots or videos (multi-agent only)",
+        type=["png", "jpg", "jpeg", "webp", "gif",
+              "mp4", "mov", "webm", "avi", "mkv", "m4v"],
         accept_multiple_files=True,
-        help="The media sub-agent reads each image, identifies the SLAP screen, and extracts visible bug evidence.",
+        help=(
+            "Images: media sub-agent identifies the SLAP screen and extracts "
+            "visible evidence. Videos: keyframes are extracted with ffmpeg "
+            f"(scene-detect, max 8 frames; ≤ {MAX_VIDEO_DURATION_SECONDS}s)."
+        ),
         key=f"upload_{st.session_state.input_version}",
     )
 
     if uploaded_files:
         import base64 as _b64
-        thumbs_html = '<div class="thumb-strip">'
+        image_items = []
+        video_items = []
         for f in uploaded_files:
-            data_url = "data:image/png;base64," + _b64.b64encode(f.getvalue()).decode("ascii")
+            ext = Path(f.name).suffix.lower()
             safe_name = html.escape(f.name)
-            thumbs_html += (
-                f'<div class="thumb-wrap">'
-                f'<img class="thumb" src="{data_url}" alt="{safe_name}"/>'
-                f'<div class="thumb-cap" title="{safe_name}">{safe_name}</div>'
-                f'</div>'
-            )
-        thumbs_html += "</div>"
-        st.markdown(thumbs_html, unsafe_allow_html=True)
+            if ext in IMAGE_EXTENSIONS:
+                data_url = "data:image/png;base64," + _b64.b64encode(f.getvalue()).decode("ascii")
+                image_items.append(
+                    f'<div class="thumb-wrap">'
+                    f'<img class="thumb" src="{data_url}" alt="{safe_name}"/>'
+                    f'<div class="thumb-cap" title="{safe_name}">{safe_name}</div>'
+                    f'</div>'
+                )
+            else:
+                video_items.append(f)
+
+        if image_items:
+            st.markdown('<div class="thumb-strip">' + "".join(image_items) + "</div>",
+                        unsafe_allow_html=True)
+        for v in video_items:
+            st.video(v.getvalue(), format=f"video/{Path(v.name).suffix.lstrip('.')}")
+            st.caption(f"🎬 {v.name}")
 
     if uploaded_files and pipeline_choice.startswith("Rule-based"):
         st.caption("⚠ Rule-based ignores attachments. Switch to multi-agent to use them.")
@@ -846,13 +864,24 @@ if triage_btn:
 
     if use_multi_agent and media and media.findings:
         with tabs[idx]:
-            st.caption("What the media sub-agent saw in each attached image.")
+            st.caption("What the media sub-agent saw in each attachment.")
             for f in media.findings:
-                st.markdown(f"#### {Path(f.image_path).name}")
+                kind_chip = "🎬 VIDEO" if f.kind == "video" else "🖼 IMAGE"
+                st.markdown(f"#### {kind_chip} · {Path(f.image_path).name}")
+
+                # Layout: media preview on the left, structured findings on the right.
                 left, right = st.columns([1, 2])
                 with left:
-                    if Path(f.image_path).exists():
-                        st.image(f.image_path, use_container_width=True)
+                    if f.kind == "video":
+                        # Full player so the reviewer can scrub through the bug
+                        if Path(f.image_path).exists():
+                            st.video(f.image_path)
+                        if f.duration_seconds:
+                            st.caption(f"Duration: {f.duration_seconds:.1f}s · {f.frame_count} keyframe(s)")
+                    else:
+                        if Path(f.image_path).exists():
+                            st.image(f.image_path, use_container_width=True)
+
                 with right:
                     sig = f.triage_signals or {}
                     st.markdown(f"**Screen:** {f.screen}")
@@ -862,7 +891,16 @@ if triage_btn:
                         st.markdown(f"**Severity hint:** {sig.get('severity_hint', '?')}")
                         if sig.get("contradicts_email_claim"):
                             st.warning(f"Contradicts email: {sig['contradicts_email_claim']}")
+                    if f.kind == "video" and f.action_observed:
+                        st.markdown(f"**Action observed:**  \n{f.action_observed}")
+                    if f.kind == "video" and f.failure_moment:
+                        st.error(f"**Failure moment:** {f.failure_moment}")
                     st.markdown(f"**One-line summary:**  \n{f.one_line_summary}")
+                    if f.kind == "video" and f.screen_sequence:
+                        st.markdown(
+                            "**Screen sequence:**  \n"
+                            + " → ".join(f.screen_sequence)
+                        )
                     if f.ui_anomalies:
                         st.markdown("**Anomalies:**")
                         for a in f.ui_anomalies:
@@ -875,6 +913,17 @@ if triage_btn:
                         with st.expander("Visible text extracted"):
                             for t in f.visible_text:
                                 st.markdown(f"- {t}")
+
+                # For videos: show the keyframes the sub-agent actually saw,
+                # so the reviewer can audit Claude's frame-by-frame reasoning.
+                if f.kind == "video" and f.frames:
+                    st.markdown("**Keyframes the sub-agent analysed:**")
+                    cols = st.columns(min(len(f.frames), 4))
+                    for i, frame_path in enumerate(f.frames):
+                        if Path(frame_path).exists():
+                            with cols[i % len(cols)]:
+                                st.image(frame_path, caption=f"Frame {i+1}", use_container_width=True)
+
                 st.divider()
         idx += 1
 
