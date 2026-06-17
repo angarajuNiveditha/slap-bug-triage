@@ -34,6 +34,7 @@ serialize it however it wants.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from ..agent_parser         import BugReport
@@ -57,6 +58,80 @@ class HostResult:
     similarity: SimilarityResult     # assembled (embeddings + dedup) for ticket builder
     severity:   SeverityResult
     draft:      TicketDraft
+
+
+# ─── Quality checks ────────────────────────────────────────────────────────
+
+VAGUE_TEXT_THRESHOLD = 350   # chars of raw email body, lower = considered vague
+_PLACEHOLDER_VALUES  = {"", "not provided.", "not provided", "unknown", "none", "n/a"}
+
+
+def _is_placeholder(value: str) -> bool:
+    return (value or "").strip().lower() in _PLACEHOLDER_VALUES
+
+
+def detect_quality_issues(bug: BugReport, media: "MediaResult") -> list:
+    """
+    Return a list of {type, severity, message, suggested_action} dicts when
+    the report's quality is too low for a confident triage call:
+
+    - vague_report:        short text + missing key fields (steps / impact / actual)
+    - media_contradicts_text: any image whose findings disagree with the email body
+
+    These get folded into triage_notes.quality_issues and surfaced in the UI
+    so the reporter can refile with the missing detail before the draft is
+    treated as authoritative.
+    """
+    issues: list = []
+
+    # 1. Vague report — multiple structural signals must all be weak before we flag
+    missing = []
+    if len((bug.raw_text or "").strip()) < VAGUE_TEXT_THRESHOLD:
+        missing.append("the report body is under ~350 characters")
+    if not bug.steps_to_reproduce:
+        missing.append("no steps to reproduce were provided")
+    if _is_placeholder(bug.impact):
+        missing.append("no impact statement was provided")
+    if _is_placeholder(bug.actual_result):
+        missing.append("no actual result was described")
+    if _is_placeholder(bug.expected_result):
+        missing.append("no expected result was described")
+    if _is_placeholder(bug.platform):
+        missing.append("no platform was specified")
+    if _is_placeholder(bug.reproducibility):
+        missing.append("reproducibility was not stated")
+
+    if len(missing) >= 2:
+        issues.append({
+            "type":             "vague_report",
+            "severity":         "warning",
+            "message":          "The report is missing details needed for confident triage: " + "; ".join(missing) + ".",
+            "suggested_action": (
+                "Please refile this bug with clear steps to reproduce, expected vs actual "
+                "behaviour, the platform/version, and a user-impact statement."
+            ),
+        })
+
+    # 2. Image / text contradictions — flagged per-image by the media sub-agent
+    if media and media.findings:
+        for f in media.findings:
+            contra = (f.triage_signals or {}).get("contradicts_email_claim")
+            if not contra:
+                continue
+            img_name = Path(f.image_path).name if f.image_path else "attachment"
+            issues.append({
+                "type":             "media_contradicts_text",
+                "severity":         "warning",
+                "image":            img_name,
+                "screen":           f.screen,
+                "message":          f"Attachment '{img_name}' shows the '{f.screen}' screen, which contradicts the email: {contra}",
+                "suggested_action": (
+                    "Please refile with a description that matches what the screenshot actually shows, "
+                    "or attach the correct screenshot for the bug you intended to report."
+                ),
+            })
+
+    return issues
 
 
 class HostAgent:
@@ -145,6 +220,11 @@ class HostAgent:
             draft.triage_notes["media_combined_summary"] = media.combined_summary
         if dup.duplicate_reasoning:
             draft.triage_notes["duplicate_reasoning"] = dup.duplicate_reasoning
+
+        # ── Step 9: quality checks (vague report + media-vs-text conflict) ──
+        quality_issues = detect_quality_issues(bug, media)
+        if quality_issues:
+            draft.triage_notes["quality_issues"] = quality_issues
 
         return HostResult(
             bug        = bug,
