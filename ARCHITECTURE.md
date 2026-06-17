@@ -179,6 +179,37 @@ the bug attachments. This is what lets it identify a screenshot as
 e.g. `"Cart (full view)"` or `"Phone login / OTP"` instead of just
 "some product page."
 
+### 4.1 Video attachments
+
+The media sub-agent handles videos in addition to images. The dispatch
+is internal to `src/agents/subagent_media.py`:
+
+| Aspect | Detail |
+|---|---|
+| **Accepted extensions** | `.mp4 .mov .webm .avi .mkv .m4v` |
+| **Pre-processor** | `ffmpeg` from `imageio-ffmpeg` (no system install required — binary lives inside `site-packages/imageio_ffmpeg/binaries/`) |
+| **Keyframe strategy** | Scene-change detection (threshold 0.30) capped at `MAX_KEYFRAMES = 8`. Fallback to evenly-spaced sampling if scene-detect yields 0 frames on a static clip. |
+| **Duration cap** | `MAX_VIDEO_DURATION_SECONDS = 60`. Longer videos return a `state="rejected"` MediaFinding with a clear `one_line_summary` — no Claude call wasted, refile prompt fires through the same UX path. |
+| **Audio** | Not transcribed in this iteration. Whisper / `faster-whisper` integration is intentionally deferred. |
+| **Claude calls** | One Claude call **per video** (not per frame) so the prompt can ask for **sequence reasoning** — what action does the user take across frames, where is the failure moment, what's the final state. |
+| **Output shape** | One `MediaFinding` per video. The `kind` field disambiguates from images; video-only fields (`screen_sequence`, `action_observed`, `failure_moment`, `frame_count`, `duration_seconds`, `frames`) are populated alongside the existing common fields. |
+| **Frame lifecycle** | Keyframes are written into a `tempfile.mkdtemp(prefix="slap_video_frames_")` directory. We don't context-manage that dir because the Streamlit UI reads the frame paths after the sub-agent returns. Tempdirs accumulate in `/tmp` and the OS cleans them; acceptable for a prototype. |
+
+The combined_summary returned by `MediaResult` aggregates across both
+images and videos — image batch summary first, each video's
+`one_line_summary` appended — so the parser sub-agent sees one unified
+evidence narrative regardless of attachment type.
+
+### 4.2 Why one Claude call per video (not per frame)
+
+A video tells you more than a stack of independent screenshots because
+of the **temporal ordering**. "User taps Proceed to Pay → spinner →
+crash to home" is qualitatively different from three random
+screenshots of the same screens. Asking Claude to reason about all
+keyframes in one call preserves that ordering. The trade-off — that
+each video costs N× an image's vision-token budget — is acceptable
+given the 8-frame cap.
+
 ---
 
 ## 5. Quality gating (the refile path)
@@ -370,6 +401,30 @@ stay the same.
 ## 9. Design decisions log (most recent first)
 
 Decisions worth remembering, with brief rationale.
+
+### D-10: Video attachments share `subagent_media` rather than a separate sub-agent
+
+We considered a `subagent_video.py` parallel to `subagent_media.py`.
+Decided against it. Reasons:
+  - Most bugs will have at most one or two attachments — the
+    "switchboard" overhead at the host-agent layer is unnecessary
+    duplication.
+  - Image and video processing share the same SLAP context, the same
+    contradiction-detection rules, and the same output type
+    (`MediaFinding`). Splitting them would re-duplicate all of that.
+  - The dispatch is by file extension and lives inside a single
+    `process_attachments` function — three lines of routing logic, no
+    abstraction needed.
+
+So a single `src/agents/subagent_media.py` handles both kinds: images
+go through `_process_images` (one Claude call for the whole batch),
+videos go through `_process_one_video` (one Claude call per video,
+preceded by ffmpeg keyframe extraction). The host agent doesn't know
+the difference.
+
+Audio transcription was intentionally deferred — adding `faster-whisper`
+is a separate decision to make when we actually have videos with
+narration that matters.
 
 ### D-09: Drop the structural cross-check, trust Claude's contradiction flag
 

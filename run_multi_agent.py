@@ -30,7 +30,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from src.agents.host_agent import HostAgent
-from src.agents.subagent_media import IMAGE_EXTENSIONS
+from src.agents.subagent_media import MEDIA_EXTENSIONS
 from src.jira_client import JiraClient
 
 
@@ -56,11 +56,11 @@ def discover_inputs(paths: list) -> list:
             if not email.exists():
                 print(f"  ✗ {p}: no email.txt — skipping")
                 continue
-            images = sorted(
+            media = sorted(
                 f for f in p.iterdir()
-                if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS
+                if f.is_file() and f.suffix.lower() in MEDIA_EXTENSIONS
             )
-            bugs.append((p.name, email.read_text(encoding="utf-8"), [str(i) for i in images]))
+            bugs.append((p.name, email.read_text(encoding="utf-8"), [str(i) for i in media]))
         else:
             print(f"  ✗ {p}: not a .txt or a directory — skipping")
     return bugs

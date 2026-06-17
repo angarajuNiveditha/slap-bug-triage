@@ -254,13 +254,23 @@ class HostAgent:
             draft.triage_notes["media_findings"] = [
                 {
                     "image_path":       f.image_path,
+                    "kind":             f.kind,
                     "screen":           f.screen,
                     "state":            f.state,
+                    "visible_text":     f.visible_text,
                     "ui_anomalies":     f.ui_anomalies,
                     "error_indicators": f.error_indicators,
                     "device_hints":     f.device_hints,
                     "triage_signals":   f.triage_signals,
                     "one_line_summary": f.one_line_summary,
+                    # Video-only fields (default-valued for images, so the
+                    # JSON stays uniform).
+                    "duration_seconds": f.duration_seconds,
+                    "frame_count":      f.frame_count,
+                    "screen_sequence":  f.screen_sequence,
+                    "action_observed":  f.action_observed,
+                    "failure_moment":   f.failure_moment,
+                    "frames":           f.frames,
                 }
                 for f in media.findings
             ]
