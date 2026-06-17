@@ -358,6 +358,9 @@ if triage_btn:
     st.subheader("2. Result")
 
     # ── Quality warnings (vague report / image-vs-text contradiction) ──────
+    # If we flag a quality issue we STOP rendering — no tentative draft is
+    # shown below, because the whole point of the refile prompt is that the
+    # input wasn't good enough to triage on.
     quality_issues = draft.triage_notes.get("quality_issues") or []
     if quality_issues:
         st.error(
@@ -380,19 +383,11 @@ if triage_btn:
                 if action:
                     st.markdown(f"_What to do:_ {action}")
 
-        bc1, bc2 = st.columns([1, 5])
-        with bc1:
-            if st.button("📝 Refile this bug", type="primary", key="refile_btn"):
-                st.session_state.input_version += 1
-                st.rerun()
-        with bc2:
-            st.caption(
-                "Refile clears the form so you can paste a corrected report. "
-                "The tentative draft below is still shown for context — review it "
-                "to see what the agent inferred from the inadequate input."
-            )
+        if st.button("📝 Refile this bug", type="primary", key="refile_btn"):
+            st.session_state.input_version += 1
+            st.rerun()
 
-        st.divider()
+        st.stop()
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Priority", severity.priority, severity.severity)
