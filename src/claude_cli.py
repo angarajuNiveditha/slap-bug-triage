@@ -14,11 +14,45 @@ The wrapper:
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import subprocess
+from pathlib import Path
 from typing import Any, Optional, Sequence
 
-CLAUDE_BIN      = "claude"
+
+def _find_claude_bin() -> str:
+    """
+    Locate a working `claude` binary, in order of preference:
+
+    1. CLAUDE_BIN environment variable (escape hatch — wins if set).
+    2. `claude` resolvable on PATH and executable.
+    3. Bundled CLI inside Claude Desktop's data directory
+       (~/Library/Application Support/Claude/claude-code/<ver>/claude.app/...)
+       — survives corp endpoint security that deletes Homebrew-installed
+       binaries.
+    4. Fall back to bare "claude" so subprocess raises a clear error.
+    """
+    override = os.environ.get("CLAUDE_BIN")
+    if override:
+        return override
+
+    on_path = shutil.which("claude")
+    if on_path and os.access(on_path, os.X_OK):
+        return on_path
+
+    bundled_root = Path.home() / "Library" / "Application Support" / "Claude" / "claude-code"
+    if bundled_root.is_dir():
+        for version_dir in sorted(bundled_root.iterdir(), reverse=True):
+            candidate = version_dir / "claude.app" / "Contents" / "MacOS" / "claude"
+            if candidate.exists() and os.access(candidate, os.X_OK):
+                return str(candidate)
+
+    return "claude"
+
+
+CLAUDE_BIN      = _find_claude_bin()
 DEFAULT_TIMEOUT = 180   # seconds — large-context similarity calls can take ~30s
 
 _FENCE_RE = re.compile(r"^\s*```(?:json|JSON)?\s*\n?(.*?)\n?```\s*$", re.DOTALL)
