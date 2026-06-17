@@ -53,151 +53,211 @@ st.set_page_config(
 )
 
 # ── Theme: typography, colours, polish ─────────────────────────────────────
+# Palette: warm rose accent on near-white, charcoal hero. Single accent
+# colour (#E11D48) keeps everything calm. Priority colours stay vivid.
 st.markdown(
     """
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
-      /* Strip Streamlit chrome */
-      [data-testid="stDeployButton"], .stDeployButton,
-      [data-testid="stStatusWidget"]         { display: none !important; }
-      header[data-testid="stHeader"]         { background: transparent; height: 0; }
-      footer                                  { display: none !important; }
-      #MainMenu                               { display: none !important; }
+      /* Strip ONLY the Deploy button; keep the status widget + kebab menu. */
+      [data-testid="stDeployButton"], .stDeployButton { display: none !important; }
 
-      /* Page background */
-      [data-testid="stAppViewContainer"] {
-          background: linear-gradient(180deg, #F8FAFC 0%, #FFFFFF 50%);
-      }
-      [data-testid="stMain"] .block-container {
-          padding-top: 1.2rem;
-          max-width: 1180px;
-      }
+      /* Page background — quiet near-white */
+      [data-testid="stAppViewContainer"] { background: #FAFAF7; }
+      [data-testid="stMain"] .block-container { padding-top: 1.0rem; max-width: 1200px; }
 
       /* Typography */
       html, body, [class*="css"], .stMarkdown, .stTextArea, .stSelectbox, .stRadio {
           font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+          color: #1A1A1A;
       }
       code, pre { font-family: 'JetBrains Mono', monospace !important; font-size: 12.5px !important; }
 
       /* ── Hero ─────────────────────────────────────────────────────── */
       .slap-hero {
-          background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 50%, #DB2777 100%);
+          background: #0F172A;
           color: white;
-          padding: 26px 32px;
-          border-radius: 18px;
-          box-shadow: 0 20px 40px -12px rgba(79, 70, 229, 0.35);
-          margin-bottom: 24px;
-          display: flex;
-          align-items: center;
-          gap: 20px;
+          padding: 22px 28px;
+          border-radius: 14px;
+          margin: 4px 0 18px 0;
+          display: flex; align-items: center; gap: 18px;
+          position: relative; overflow: hidden;
+      }
+      .slap-hero::after {
+          content: ""; position: absolute; right: -40px; top: -40px;
+          width: 200px; height: 200px; border-radius: 100%;
+          background: radial-gradient(circle, rgba(225,29,72,0.35) 0%, transparent 70%);
+          pointer-events: none;
       }
       .slap-hero-icon {
-          width: 60px; height: 60px;
-          background: rgba(255,255,255,0.18);
-          border-radius: 14px;
+          width: 52px; height: 52px;
+          background: rgba(225,29,72,0.18);
+          border: 1px solid rgba(225,29,72,0.35);
+          border-radius: 12px;
           display: flex; align-items: center; justify-content: center;
-          backdrop-filter: blur(8px);
           flex-shrink: 0;
       }
-      .slap-hero-icon svg { width: 36px; height: 36px; }
-      .slap-hero-title { font-size: 26px; font-weight: 700; margin: 0; letter-spacing: -0.4px; }
-      .slap-hero-sub   { margin-top: 4px; color: rgba(255,255,255,0.85); font-size: 13.5px; }
+      .slap-hero-icon svg { width: 30px; height: 30px; color: #FB7185; }
+      .slap-hero-title { font-size: 22px; font-weight: 700; margin: 0; letter-spacing: -0.3px; }
+      .slap-hero-sub   { margin-top: 2px; color: rgba(255,255,255,0.7); font-size: 13px; }
+      .slap-hero-badge {
+          margin-left: auto; padding: 5px 11px; border-radius: 999px;
+          background: rgba(34, 197, 94, 0.15); color: #4ADE80;
+          font-size: 11px; font-weight: 600; letter-spacing: 0.5px;
+          border: 1px solid rgba(34, 197, 94, 0.3);
+          display: flex; align-items: center; gap: 6px;
+      }
+      .slap-hero-badge::before {
+          content: ""; width: 6px; height: 6px; border-radius: 50%;
+          background: #4ADE80; box-shadow: 0 0 8px #4ADE80;
+      }
+
+      /* ── Pipeline stepper ─────────────────────────────────────────── */
+      .pipeline-shell {
+          background: white; border: 1px solid #ECEAE2; border-radius: 14px;
+          padding: 16px 20px; margin-bottom: 22px;
+      }
+      .pipeline-title {
+          font-size: 11px; font-weight: 700; letter-spacing: 1.2px;
+          text-transform: uppercase; color: #94928A; margin-bottom: 12px;
+      }
+      .pipeline-row { display: flex; align-items: stretch; gap: 8px; overflow-x: auto; }
+      .pipe-node {
+          flex: 1; min-width: 130px;
+          padding: 12px 14px; border-radius: 10px;
+          border: 1px solid #ECEAE2; background: #FAFAF7;
+          display: flex; flex-direction: column; gap: 4px;
+      }
+      .pipe-node-head { display: flex; align-items: center; gap: 8px; }
+      .pipe-node-icon {
+          width: 26px; height: 26px; border-radius: 7px;
+          background: #FFF1F2; color: #E11D48;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 14px; font-weight: 700; flex-shrink: 0;
+      }
+      .pipe-node-name { font-size: 13px; font-weight: 600; color: #1A1A1A; }
+      .pipe-node-desc { font-size: 11px; color: #6B6B6B; line-height: 1.4; }
+      .pipe-edge {
+          flex-shrink: 0; align-self: center;
+          width: 14px; height: 2px; background: #D9D6CD;
+          position: relative;
+      }
+      .pipe-edge::after {
+          content: ""; position: absolute; right: -1px; top: -3px;
+          border-left: 6px solid #D9D6CD;
+          border-top: 4px solid transparent;
+          border-bottom: 4px solid transparent;
+      }
+      .pipe-endpoint {
+          padding: 12px 14px; border-radius: 10px;
+          background: #0F172A; color: white;
+          display: flex; flex-direction: column; gap: 2px;
+          justify-content: center; min-width: 100px; flex-shrink: 0;
+      }
+      .pipe-endpoint-label { font-size: 10px; letter-spacing: 0.8px; text-transform: uppercase; color: rgba(255,255,255,0.6); }
+      .pipe-endpoint-value { font-size: 13px; font-weight: 600; }
 
       /* ── Section headers ─────────────────────────────────────────── */
       .section-label {
-          display: inline-flex; align-items: center; gap: 8px;
-          font-size: 11px; font-weight: 600; letter-spacing: 1.2px;
-          text-transform: uppercase;
-          color: #6366F1;
-          margin: 24px 0 8px 0;
+          display: inline-flex; align-items: center; gap: 10px;
+          font-size: 11px; font-weight: 700; letter-spacing: 1.2px;
+          text-transform: uppercase; color: #94928A;
+          margin: 18px 0 10px 0;
       }
       .section-label::before {
-          content: ""; width: 24px; height: 2px;
-          background: linear-gradient(90deg, #4F46E5, #DB2777);
-          border-radius: 2px;
+          content: ""; width: 22px; height: 2px; background: #E11D48; border-radius: 2px;
       }
 
       /* ── Custom metric tiles ──────────────────────────────────────── */
-      .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin: 8px 0 18px 0; }
+      .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 6px 0 18px 0; }
       .mtile {
           background: white;
-          border: 1px solid #E2E8F0;
-          border-radius: 14px;
-          padding: 16px 18px;
+          border: 1px solid #ECEAE2;
+          border-radius: 12px;
+          padding: 14px 16px;
           transition: transform 0.15s, box-shadow 0.15s;
       }
-      .mtile:hover { transform: translateY(-2px); box-shadow: 0 10px 24px -8px rgba(15,23,42,0.12); }
-      .mtile-label { font-size: 10.5px; font-weight: 600; letter-spacing: 0.9px;
-                     text-transform: uppercase; color: #64748B; margin-bottom: 8px; }
-      .mtile-value { font-size: 22px; font-weight: 700; color: #0F172A; line-height: 1.15; }
-      .mtile-sub   { font-size: 12px; color: #64748B; margin-top: 4px; }
+      .mtile:hover { transform: translateY(-1px); box-shadow: 0 8px 20px -10px rgba(15,23,42,0.10); }
+      .mtile-label { font-size: 10px; font-weight: 700; letter-spacing: 1px;
+                     text-transform: uppercase; color: #94928A; margin-bottom: 8px; }
+      .mtile-value { font-size: 22px; font-weight: 700; color: #1A1A1A; line-height: 1.1; }
+      .mtile-sub   { font-size: 11.5px; color: #6B6B6B; margin-top: 4px; }
 
-      .mtile.prio-P0 { background: linear-gradient(135deg, #FEF2F2 0%, #FFFFFF 100%); border-color: #FCA5A5; }
+      .mtile.prio-P0 { background: #FEF2F2; border-color: #FCA5A5; }
       .mtile.prio-P0 .mtile-value { color: #B91C1C; }
-      .mtile.prio-P1 { background: linear-gradient(135deg, #FFF7ED 0%, #FFFFFF 100%); border-color: #FDBA74; }
+      .mtile.prio-P1 { background: #FFF7ED; border-color: #FDBA74; }
       .mtile.prio-P1 .mtile-value { color: #C2410C; }
-      .mtile.prio-P2 { background: linear-gradient(135deg, #FFFBEB 0%, #FFFFFF 100%); border-color: #FCD34D; }
+      .mtile.prio-P2 { background: #FFFBEB; border-color: #FCD34D; }
       .mtile.prio-P2 .mtile-value { color: #B45309; }
-      .mtile.prio-P3 { background: linear-gradient(135deg, #EFF6FF 0%, #FFFFFF 100%); border-color: #93C5FD; }
+      .mtile.prio-P3 { background: #EFF6FF; border-color: #93C5FD; }
       .mtile.prio-P3 .mtile-value { color: #1D4ED8; }
 
       /* ── Buttons ─────────────────────────────────────────────────── */
       .stButton button[kind="primary"] {
-          background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%);
-          border: 0; border-radius: 10px; padding: 10px 18px;
-          font-weight: 600; letter-spacing: 0.2px;
-          box-shadow: 0 6px 14px -4px rgba(79,70,229,0.45);
-          transition: transform 0.15s, box-shadow 0.15s;
+          background: #E11D48; border: 0; border-radius: 10px;
+          padding: 10px 18px; font-weight: 600; letter-spacing: 0.2px; color: white;
+          box-shadow: 0 6px 14px -6px rgba(225,29,72,0.5);
+          transition: transform 0.12s, box-shadow 0.12s, background 0.12s;
       }
       .stButton button[kind="primary"]:hover:not(:disabled) {
+          background: #BE123C;
           transform: translateY(-1px);
-          box-shadow: 0 10px 20px -6px rgba(79,70,229,0.55);
+          box-shadow: 0 10px 22px -8px rgba(225,29,72,0.6);
       }
       .stButton button[kind="primary"]:disabled {
-          background: #CBD5E1; color: white; box-shadow: none; opacity: 0.6;
+          background: #D9D6CD; color: #94928A; box-shadow: none;
+      }
+      .stButton button[kind="secondary"] {
+          background: white; border: 1px solid #ECEAE2; color: #1A1A1A;
+          border-radius: 10px; font-weight: 500;
       }
 
-      /* ── Text area + uploader polish ─────────────────────────────── */
+      /* ── Inputs ───────────────────────────────────────────────────── */
       .stTextArea textarea {
           border-radius: 12px !important;
-          border-color: #E2E8F0 !important;
+          border: 1px solid #ECEAE2 !important;
           font-family: 'JetBrains Mono', monospace !important;
           font-size: 13px !important;
+          background: white !important;
       }
       .stTextArea textarea:focus {
-          border-color: #6366F1 !important;
-          box-shadow: 0 0 0 3px rgba(99,102,241,0.12) !important;
+          border-color: #E11D48 !important;
+          box-shadow: 0 0 0 3px rgba(225,29,72,0.12) !important;
       }
       [data-testid="stFileUploader"] section {
           border-radius: 12px;
-          border-style: dashed !important;
-          border-color: #CBD5E1 !important;
-          background: #F8FAFC;
+          border: 1px dashed #D9D6CD !important;
+          background: white;
       }
+      /* Constrain inline image previews — Streamlit makes them huge by default. */
+      [data-testid="stFileUploaderFile"] img { max-width: 88px !important; max-height: 88px !important; border-radius: 6px; }
 
       /* ── Tabs ────────────────────────────────────────────────────── */
-      .stTabs [data-baseweb="tab-list"] { gap: 4px; border-bottom: 1px solid #E2E8F0; }
+      .stTabs [data-baseweb="tab-list"] {
+          gap: 2px; border-bottom: 1px solid #ECEAE2;
+          background: transparent;
+      }
       .stTabs [data-baseweb="tab"] {
-          font-weight: 600; font-size: 13.5px;
-          padding: 10px 16px; border-radius: 8px 8px 0 0;
+          font-weight: 600; font-size: 13px;
+          padding: 10px 18px; color: #6B6B6B;
       }
       .stTabs [aria-selected="true"] {
-          color: #4F46E5 !important;
-          background: #EEF2FF;
+          color: #E11D48 !important;
+          border-bottom: 2px solid #E11D48 !important;
       }
 
-      /* ── Quality issues card ─────────────────────────────────────── */
+      /* ── Quality issues ──────────────────────────────────────────── */
       .quality-banner {
-          background: linear-gradient(135deg, #FEF2F2 0%, #FFF7ED 100%);
+          background: #FEF2F2;
           border: 1px solid #FCA5A5;
           border-left: 4px solid #DC2626;
-          border-radius: 12px;
-          padding: 18px 22px;
-          margin: 10px 0 18px 0;
+          border-radius: 10px;
+          padding: 16px 20px;
+          margin: 6px 0 16px 0;
       }
-      .quality-banner h4 { margin: 0 0 4px 0; color: #B91C1C; font-size: 16px; font-weight: 700; }
-      .quality-banner p  { margin: 0; color: #7F1D1D; font-size: 13.5px; }
+      .quality-banner h4 { margin: 0 0 3px 0; color: #B91C1C; font-size: 15px; font-weight: 700; }
+      .quality-banner p  { margin: 0; color: #7F1D1D; font-size: 13px; }
 
       .quality-card {
           background: white;
@@ -209,18 +269,39 @@ st.markdown(
       .quality-card-kind {
           display: inline-block;
           background: #FEE2E2; color: #B91C1C;
-          padding: 3px 10px; border-radius: 999px;
-          font-size: 11px; font-weight: 600; letter-spacing: 0.5px;
+          padding: 2px 9px; border-radius: 999px;
+          font-size: 10.5px; font-weight: 700; letter-spacing: 0.6px;
           text-transform: uppercase;
           margin-bottom: 8px;
       }
-      .quality-card-msg    { color: #0F172A; font-size: 14px; line-height: 1.5; margin: 4px 0; }
-      .quality-card-action { color: #475569; font-size: 13px; line-height: 1.5; margin-top: 6px;
-                             padding-top: 8px; border-top: 1px dashed #E2E8F0; }
+      .quality-card-msg    { color: #1A1A1A; font-size: 13.5px; line-height: 1.55; margin: 4px 0; }
+      .quality-card-action { color: #475569; font-size: 12.5px; line-height: 1.55; margin-top: 6px;
+                             padding-top: 8px; border-top: 1px dashed #ECEAE2; }
+
+      /* ── Attachment thumb strip (custom) ─────────────────────────── */
+      .thumb-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+      .thumb { width: 96px; height: 96px; border-radius: 8px; border: 1px solid #ECEAE2;
+               object-fit: cover; background: #FAFAF7; }
+      .thumb-cap { font-size: 11px; color: #6B6B6B; text-align: center; margin-top: 3px;
+                   max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .thumb-wrap { display: flex; flex-direction: column; align-items: center; }
 
       /* ── Misc ────────────────────────────────────────────────────── */
-      .stCaption, .caption { color: #64748B !important; }
-      hr { border-color: #E2E8F0 !important; margin: 12px 0 !important; }
+      .stCaption, .caption { color: #6B6B6B !important; }
+      hr { border-color: #ECEAE2 !important; margin: 14px 0 !important; }
+
+      /* Compact info card */
+      .info-card {
+          background: white; border: 1px solid #ECEAE2; border-radius: 12px;
+          padding: 16px 18px;
+      }
+      .info-card h5 { margin: 0 0 8px 0; font-size: 12px; font-weight: 700; letter-spacing: 0.8px;
+                      text-transform: uppercase; color: #94928A; }
+      .info-card-row { display: flex; justify-content: space-between; padding: 6px 0;
+                       border-bottom: 1px dashed #ECEAE2; font-size: 13px; }
+      .info-card-row:last-child { border-bottom: 0; }
+      .info-card-row span:first-child { color: #6B6B6B; }
+      .info-card-row span:last-child  { color: #1A1A1A; font-weight: 500; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -391,12 +472,12 @@ st.markdown(
     """
     <div class="slap-hero">
       <div class="slap-hero-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
              stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
-          <ellipse cx="12" cy="13.5" rx="5" ry="6.5" fill="white" stroke="white"/>
-          <line x1="12" y1="7"  x2="12" y2="20" stroke="#7C3AED" stroke-width="1.2"/>
-          <circle cx="9.7" cy="11" r="0.9" fill="#7C3AED" stroke="none"/>
-          <circle cx="14.3" cy="11" r="0.9" fill="#7C3AED" stroke="none"/>
+          <ellipse cx="12" cy="13.5" rx="5" ry="6.5" fill="currentColor" stroke="currentColor"/>
+          <line x1="12" y1="7"  x2="12" y2="20" stroke="#0F172A" stroke-width="1.2"/>
+          <circle cx="9.7" cy="11" r="0.9" fill="#0F172A" stroke="none"/>
+          <circle cx="14.3" cy="11" r="0.9" fill="#0F172A" stroke="none"/>
           <path d="M11 6 L9 3.5"  />
           <path d="M13 6 L15 3.5" />
           <path d="M7 12 L4 10"   />
@@ -409,7 +490,71 @@ st.markdown(
       </div>
       <div>
         <div class="slap-hero-title">SLAP Bug Triage</div>
-        <div class="slap-hero-sub">Paste the report. Attach screenshots. The agent drafts a Jira ticket — no auto-filing.</div>
+        <div class="slap-hero-sub">Drafts a Jira ticket from a bug-report email plus screenshots. Read-only Jira; nothing is auto-filed.</div>
+      </div>
+      <div class="slap-hero-badge">Live</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ── Pipeline architecture (always visible) ─────────────────────────────────
+
+st.markdown(
+    """
+    <div class="pipeline-shell">
+      <div class="pipeline-title">Multi-agent pipeline · Astral coordinates 5 sub-agents</div>
+      <div class="pipeline-row">
+        <div class="pipe-endpoint">
+          <div class="pipe-endpoint-label">Input</div>
+          <div class="pipe-endpoint-value">Email + Images</div>
+        </div>
+        <div class="pipe-edge"></div>
+        <div class="pipe-node">
+          <div class="pipe-node-head">
+            <div class="pipe-node-icon">M</div>
+            <div class="pipe-node-name">Media</div>
+          </div>
+          <div class="pipe-node-desc">Reads screenshots, identifies the SLAP screen, extracts visible bug evidence.</div>
+        </div>
+        <div class="pipe-edge"></div>
+        <div class="pipe-node">
+          <div class="pipe-node-head">
+            <div class="pipe-node-icon">P</div>
+            <div class="pipe-node-name">Parser</div>
+          </div>
+          <div class="pipe-node-desc">Email + media findings &rarr; structured BugReport (title, platform, steps...).</div>
+        </div>
+        <div class="pipe-edge"></div>
+        <div class="pipe-node">
+          <div class="pipe-node-head">
+            <div class="pipe-node-icon">E</div>
+            <div class="pipe-node-name">Embeddings</div>
+          </div>
+          <div class="pipe-node-desc">Ranks the top-5 most similar bugs from 300 historical FLIPPI tickets.</div>
+        </div>
+        <div class="pipe-edge"></div>
+        <div class="pipe-node">
+          <div class="pipe-node-head">
+            <div class="pipe-node-icon">D</div>
+            <div class="pipe-node-name">Dedup</div>
+          </div>
+          <div class="pipe-node-desc">Decides if any candidate is a duplicate (confidence &ge; 0.80).</div>
+        </div>
+        <div class="pipe-edge"></div>
+        <div class="pipe-node">
+          <div class="pipe-node-head">
+            <div class="pipe-node-icon">T</div>
+            <div class="pipe-node-name">Triage</div>
+          </div>
+          <div class="pipe-node-desc">Assigns priority P0-P3 with a justification grounded in similar bugs.</div>
+        </div>
+        <div class="pipe-edge"></div>
+        <div class="pipe-endpoint">
+          <div class="pipe-endpoint-label">Output</div>
+          <div class="pipe-endpoint-value">Jira draft (ADF)</div>
+        </div>
       </div>
     </div>
     """,
@@ -424,9 +569,9 @@ st.markdown('<div class="section-label">Step 1 · Bug report</div>', unsafe_allo
 samples       = sorted(DATA_DIR.glob("*.txt")) if DATA_DIR.exists() else []
 sample_names  = ["(paste your own)"] + [p.name for p in samples]
 
-col_pick, col_pipeline = st.columns([2, 2])
+col_input, col_aside = st.columns([3, 2], gap="large")
 
-with col_pick:
+with col_aside:
     pick = st.selectbox(
         "Pre-fill from a sample",
         sample_names,
@@ -437,11 +582,9 @@ with col_pick:
     if pick != "(paste your own)":
         default_text = (DATA_DIR / pick).read_text(encoding="utf-8")
 
-with col_pipeline:
     pipeline_choice = st.radio(
         "Pipeline",
         ["Multi-agent (semantic, accepts images)", "Rule-based (instant, text-only)"],
-        horizontal=False,
         index=0,
         help=(
             "Multi-agent reads images and reasons semantically (~90–150 s). "
@@ -449,39 +592,49 @@ with col_pipeline:
         ),
     )
 
-raw_text = st.text_area(
-    "Bug report email",
-    value=default_text,
-    height=280,
-    placeholder="From: someone@flipkart.com\nSubject: [URGENT] ...\n\nDescribe the bug here...",
-    key=f"input_{pick}_{st.session_state.input_version}",
-)
+    uploaded_files = st.file_uploader(
+        "Attach screenshots (multi-agent only)",
+        type=["png", "jpg", "jpeg", "webp", "gif"],
+        accept_multiple_files=True,
+        help="The media sub-agent reads each image, identifies the SLAP screen, and extracts visible bug evidence.",
+        key=f"upload_{st.session_state.input_version}",
+        label_visibility="visible",
+    )
 
-uploaded_files = st.file_uploader(
-    "Attach screenshots (optional — multi-agent only)",
-    type=["png", "jpg", "jpeg", "webp", "gif"],
-    accept_multiple_files=True,
-    help="Images are sent to the media sub-agent, which identifies the SLAP screen and extracts visible bug evidence.",
-    key=f"upload_{st.session_state.input_version}",
-)
+    if uploaded_files:
+        import base64 as _b64
+        thumbs_html = '<div class="thumb-strip">'
+        for f in uploaded_files:
+            data_url = "data:image/png;base64," + _b64.b64encode(f.getvalue()).decode("ascii")
+            safe_name = html.escape(f.name)
+            thumbs_html += (
+                f'<div class="thumb-wrap">'
+                f'<img class="thumb" src="{data_url}" alt="{safe_name}"/>'
+                f'<div class="thumb-cap" title="{safe_name}">{safe_name}</div>'
+                f'</div>'
+            )
+        thumbs_html += "</div>"
+        st.markdown(thumbs_html, unsafe_allow_html=True)
 
-if uploaded_files:
-    cols = st.columns(min(4, len(uploaded_files)))
-    for i, f in enumerate(uploaded_files):
-        with cols[i % len(cols)]:
-            st.image(f.getvalue(), caption=f.name, use_container_width=True)
+    if uploaded_files and pipeline_choice.startswith("Rule-based"):
+        st.caption("⚠ Rule-based ignores attachments. Switch to multi-agent to use them.")
 
-triage_btn = st.button(
-    "Triage this bug",
-    type="primary",
-    disabled=not raw_text.strip(),
-    use_container_width=True,
-)
+with col_input:
+    raw_text = st.text_area(
+        "Bug report email",
+        value=default_text,
+        height=360,
+        placeholder="From: someone@flipkart.com\nSubject: [URGENT] ...\n\nDescribe the bug here...",
+        key=f"input_{pick}_{st.session_state.input_version}",
+        label_visibility="collapsed",
+    )
 
-if uploaded_files and pipeline_choice.startswith("Rule-based"):
-    st.info("Heads up: rule-based pipeline ignores image attachments. Switch to multi-agent to use them.")
-
-st.divider()
+    triage_btn = st.button(
+        "Triage this bug",
+        type="primary",
+        disabled=not raw_text.strip(),
+        use_container_width=True,
+    )
 
 
 # ── Pipeline run ────────────────────────────────────────────────────────────
