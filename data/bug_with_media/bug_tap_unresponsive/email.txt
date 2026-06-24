@@ -1,0 +1,104 @@
+From: kavya.singh@flipkart.com
+To: slap-bugs@flipkart.com
+Subject: [Feed/UI]: Discovery feed renders skeletons that never resolve — product images and chat input area stay as gray placeholders; taps on the cards do nothing
+
+Hi Team,
+
+The SLAP Discovery / Inspiration feed (the topic-card layout under
+"Back-pain relief", "New parent", "Your best shades, styled for you",
+etc.) is rendering its layout skeleton but most of the actual content
+never fills in. Product card images stay as gray rectangles for the
+entire ~20-second recording — only a couple of product images appear
+near the bottom of the feed. The chat-input / suggestions area at the
+top also renders as empty gray rectangles. Tapping the "Ask SLAP"
+chips on the placeholder cards does nothing — no navigation, no
+chat opens, no error toast.
+
+Attached: bug_tap_unresponsive.mp4 — screen recording on Android
+that walks through the feed. I'm scrolling slowly so you can see the
+gray placeholder cards persisting under three different topic
+sections, plus the broken header area.
+
+Steps to Reproduce:
+1. Open SLAP on Android with a logged-in account
+2. Navigate to the Discovery / Inspiration feed (the feed of
+   curated topic cards — "Back-pain relief: Professional WFH",
+   "New parent: Sleep-safe nursery", "Your best shades, styled for
+   you", "Bamboo vs Cotton for bedsheets", etc.)
+3. Wait 15+ seconds for content to load
+4. Observe: under every topic card, the two product-card slots show
+   gray placeholder rectangles where the product images should
+   be. Some cards have a small loading spinner inside that never
+   resolves. Titles and short descriptions DO render below the
+   placeholder ("Lumbar support cushions", "Adjustable laptop stands",
+   "Baby monitors with WiFi", "Silent HEPA purifiers"), but the
+   product images don't.
+5. Tap the "Ask SLAP" chip on any of the placeholder product cards
+   → nothing happens; no chat opens, no navigation, no error.
+6. Scroll to the bottom of the feed → eventually a few cards under
+   "Your best shades, styled for you" DO show real product images
+   (men's Nehru jackets, shirts — "maksud enterprise Sleev...",
+   "Vastraa Fusion Sleevele...", "Badoliya"), but everything above
+   is still placeholders.
+7. The chat input region at the top of the screen also shows empty
+   gray rectangles instead of the normal chat entry field with
+   suggestion chips.
+
+Expected:
+- Product card images in the Discovery feed render within 1–2
+  seconds of the card becoming visible
+- Tapping "Ask SLAP" on a product card opens the chat with that
+  product's query pre-filled (or routes to the relevant PDP)
+- The chat input field at the top is fully rendered and tappable
+
+Actual:
+- Most product card images never load — stay as gray placeholders
+- "Ask SLAP" chip taps on placeholder cards are silently swallowed
+  (no navigation, no error). Cards are inert.
+- The chat input / suggestion-chip area at the top is also stuck
+  as skeletal placeholders
+- Only the last topic card in the recording ("Your best shades")
+  partially recovers — three real product cards visible at the
+  bottom of the frame, but cards above remain broken
+
+Reproducibility:
+Consistent across the full ~20-second recording. The feed never
+recovered to a fully-loaded state while I was looking at it. I have
+not tried a full app restart yet — flagging quickly because the
+"silent tap" behaviour is the worst kind of bug to ship (user thinks
+the UI is just slow, taps repeatedly, gives up).
+
+Impact:
+- Discovery feed is a primary entry point for browsing intent — if
+  product images don't load and the chips don't respond, the user
+  can't engage with curated topics.
+- The "silent tap" failure mode (tap does nothing, no error) is
+  particularly bad — users will conclude the app is broken rather
+  than report a specific error.
+- Direct chat ("Ask SLAP" at the home / chat surface) seems unaffected
+  based on what's visible, but the feed-driven discovery path is
+  effectively dead in this state.
+
+Could be:
+- Image CDN / product-image-service failure for the discovery payload
+- A discovery-API timeout where text fields hydrate but the image
+  URLs / card-action handlers come from a separate hydration call
+  that's failing
+- A React Native render race where placeholders are mounted but
+  never replaced because the data callback never fires
+- Touch-handler regression on the placeholder cards (handlers wired
+  to the loaded state, so they're no-ops while in skeleton state)
+
+Environment:
+- Platform: Android (status bar shows VoLTE + Wi-Fi + 5G/LTE bars;
+  clock 11:48 IST)
+- App: SLAP, latest build I have installed
+- Device: Android phone (Pixel-style chrome)
+- Network: Wi-Fi + cellular both showing strong signal; the partial
+  image recovery near the bottom of the feed suggests not a hard
+  network outage — image requests are succeeding for SOME cards
+  but not most.
+
+Regards,
+Kavya Singh
+QA, SLAP

@@ -18,22 +18,51 @@ from ..agent_scorer import (
 from ..claude_cli import call_claude
 
 
-PROMPT_TEMPLATE = """You are the SLAP triage sub-agent. Assign a priority (P0, P1, P2, or P3) to the bug below.
+PROMPT_TEMPLATE = """You are the SLAP triage sub-agent. Assign a priority (P0, P1, or P2) to the bug below.
 
-Priority ladder:
-  P0  Crash, checkout/payment blocked, security/secrets risk, all-users outage, revenue-blocking. Immediate hotfix.
-  P1  Wrong AI results, price/budget ignored, ANRs, majority-user impact, core value-proposition damage. Significant degradation but not full outage.
-  P2  Partial UX degradation, image loading on slow networks, workaround exists, affects only a subset of users.
-  P3  Vague reports, cosmetic issues, minor edge cases, low scope.
+PRIMARY METHOD — use the priorities of similar past bugs.
+You are given the top similar bugs from FLIPPI's history (below), each
+with the priority your team filed it at. Those priorities are your
+STRONGEST signal: if 3 of the 5 closest matches are P1, the new bug is
+almost certainly P1. If they unanimously agree on a priority, go with
+that priority unless a hard override below kicks in. Use the priority
+ladder only when the similar bugs disagree, are weak matches, or are
+absent.
 
-A 100%-reproducible crash, or any Grayskull/secrets/infra concern, is always P0.
-A vague report (under ~350 chars with no steps) defaults to P3 pending more info.
+PRIORITY LADDER (3 tiers):
+
+P0  — Critical, needs immediate hotfix. Any of:
+        • App crash
+        • ANR (Application Not Responding)
+        • Payment failed or blocked
+        • Security or secrets risk
+        • User blocked / user loop / cannot make progress
+        • Revenue-blocking
+        • Major UI/UX breaking (user cannot use the affected feature at all)
+
+P1  — Significant, ship soon. Any of:
+        • UI/UX improvements (not blocking but visibly wrong)
+        • Price or budget ignored / wrong
+        • Text or copy changes
+        • Image loading issues
+        • Network interruptions
+        • Error messages (missing, misleading, or wrong)
+        • Tooltips
+        • Toast notifications
+
+P2  — Low scope, low severity. Any of:
+        • Minor edge cases
+        • Low priority / low severity bugs
+
+HARD OVERRIDES — these win regardless of what similar bugs say:
+  • A 100%-reproducible crash is ALWAYS P0
+  • Any Grayskull / secrets / infra concern is ALWAYS P0
 
 Reply with ONLY a single JSON object — no markdown fences:
 
 {{
-  "priority":      "P0" | "P1" | "P2" | "P3",
-  "justification": "2-3 sentence explanation grounded in scope, reproducibility, and similar bugs.",
+  "priority":      "P0" | "P1" | "P2",
+  "justification": "2-3 sentences. Reference the priorities of the similar bugs you weighted. If a hard override fired, say so explicitly.",
   "key_signals":   ["short phrase", ...]   (1-4 short phrases that drove the decision)
 }}
 
@@ -45,7 +74,7 @@ BUG:
   Platform:        {platform}
   Reproducibility: {repro}
 
-TOP SIMILAR HISTORICAL BUGS (may be empty):
+TOP SIMILAR HISTORICAL BUGS — use their priorities as the primary signal:
 {similar_json}
 
 Reply with ONLY the JSON object."""
@@ -77,8 +106,12 @@ def score_severity(bug: BugReport, similar_bugs: list) -> SeverityResult:
     if not isinstance(response, dict):
         raise ValueError(f"Triage sub-agent returned non-object: {type(response).__name__}")
 
+    # 3-tier classification only: P0 / P1 / P2. Anything else (including a
+    # stray P3 from a stale model response) collapses to P2 — the lowest
+    # active tier in the new ladder. Vague reports never reach this point
+    # because detect_quality_issues in host_agent.py routes them to refile.
     priority = response.get("priority", "P2")
-    if priority not in PRIORITY_ID_MAP:
+    if priority not in {"P0", "P1", "P2"}:
         priority = "P2"
 
     signals     = response.get("key_signals") or []

@@ -1,0 +1,82 @@
+From: nitin.bhardwaj@flipkart.com
+To: slap-bugs@flipkart.com
+Subject: [Personalization]: "Failed to save preference. Please try again." toast when answering the inline "Quick one for you" persona quiz
+
+Hi Team,
+
+The inline preference quiz that appears alongside chat results
+("Quick one for you" bottomsheet) errors out when I tap an answer.
+After a noticeable delay with no visible response, a black toast
+appears at the bottom of the screen saying "Failed to save
+preference. Please try again." The preference is NOT saved —
+re-opening the sheet shows the same question waiting for an answer.
+
+Attached: bug_failed_to_load_preferences.mp4 — 20-second screen
+recording showing me on a chat results page (back-cover product
+cards visible at top: BRENZZ, O2MG), the "Quick one for you" sheet
+with the question "When trying new brands, what's your usual move?"
+and three answer chips ("I stick with what I know works", "I'll
+try new if it's a good deal", "Always up for discovering something
+new"). I tap an option; nothing happens for several seconds; then
+the "Failed to save preference. Please try again." toast appears.
+
+Steps to Reproduce:
+1. Open SLAP on Android, run any chat query that returns product
+   cards (e.g. ask for "phone back covers")
+2. Wait for the "Quick one for you" preference bottomsheet to
+   appear above the chat input
+3. Tap any of the three answer chips
+4. Observe: no immediate visible feedback (the chip doesn't visibly
+   become "selected"); after a noticeable delay a black toast
+   appears at the bottom reading
+   "Failed to save preference. Please try again."
+5. The chip you tapped does not show a selected/saved state — the
+   sheet stays in its un-answered state
+
+Expected:
+Tapping an answer chip immediately saves the preference, the sheet
+acknowledges with a brief confirmation (or quietly advances to the
+next question / dismisses), and the preference is persisted for
+the user's profile / personalization stack.
+
+Actual:
+No immediate feedback. After a delay a "Failed to save preference.
+Please try again." toast appears. The preference is silently dropped
+— a follow-up query shows the same un-answered "Quick one for you"
+sheet again.
+
+Reproducibility:
+100% on the same query session — I tapped each of the three answer
+chips in succession; all three produced the same error toast. Tried
+on two different product-category queries, same result.
+
+Impact:
+The inline persona quiz is how SLAP refines the personalization
+profile during conversations ("Your preferences are never shared and
+only used for personalising SLAP experience for you" — visible in
+the sheet). With the save path broken:
+- New / lightly-onboarded users cannot deepen their preference
+  profile through normal chat interactions
+- Top Picks, Style Drops, and follow-up suggestions ("Suggestions
+  based on your recent conversations") degrade because the
+  preference-learning signal is dropped
+- The toast itself is a visible "the app is broken" moment, which
+  damages trust even when the user can keep using core chat / cart
+
+Could be a preference-save API timeout or a 4xx the client is
+mis-handling. The delayed toast (rather than an immediate inline
+error) is consistent with a timeout / retry exhaustion rather than
+a synchronous validation failure.
+
+Environment:
+- Platform: Android (status bar shows VoLTE icon + Wi-Fi + 5G/LTE
+  bars + full battery; clock 12:03 IST)
+- App: SLAP, latest build I have installed
+- Device: Android phone (Pixel-style notch / status bar)
+- Network: Wi-Fi + cellular both connected and strong; other SLAP
+  surfaces (chat results, product cards) load fine on the same
+  session, so it's not a generic connectivity issue
+
+Regards,
+Nitin Bhardwaj
+QA, SLAP

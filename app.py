@@ -18,6 +18,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -33,7 +34,11 @@ from src.jira_client          import JiraClient
 
 # Rule-based pipeline (instant, text-only)
 from src.agent_parser     import parse_bug_report as rb_parse
-from src.agent_scorer     import score_severity   as rb_score
+from src.agent_scorer     import (
+    score_severity as rb_score,
+    PRIORITY_ID_MAP,
+    SEVERITY_FOR_PRIORITY,
+)
 from src.tfidf_similarity import SimilarityEngine as RuleEngine
 
 # Multi-agent pipeline (Claude Code headless, supports media)
@@ -45,6 +50,31 @@ from src.agents.subagent_media  import (
 
 JIRA_BASE_URL = os.environ.get("JIRA_BASE_URL", "https://flipkart.atlassian.net")
 DATA_DIR      = Path(__file__).parent / "data"
+
+# ── Editable-output config ─────────────────────────────────────────────────
+# These power the override widgets that appear under the metric tiles so a
+# reviewer can correct the model's choices before downloading the JSON.
+
+PRIORITY_OPTIONS  = ["P0", "P1", "P2"]
+COMPONENT_OPTIONS = ["Backend", "Backend-Labs", "DS", "UI", "immersive", "bugs"]
+
+TEAM_FOR_COMPONENT = {
+    "Backend":      "BE_Flippi",
+    "Backend-Labs": "BE_Labs",
+    "DS":           "DS",
+    "UI":           "UI",
+    "immersive":    "Immersive",
+    "bugs":         "bugs",
+}
+
+# Verified component IDs on flipkart.atlassian.net (FLIPPI project).
+COMPONENT_ID_MAP = {
+    "Backend":      "14386",
+    "Backend-Labs": "14385",
+    "DS":           "14384",
+    "UI":           "14383",
+    "immersive":    "14387",
+}
 
 
 # ── Page setup ──────────────────────────────────────────────────────────────
@@ -477,6 +507,45 @@ def render_triage_md(triage: dict) -> str:
     return "\n".join(lines)
 
 
+def synthesize_email_from_form(title: str, platform: str, summary: str, steps: str) -> str:
+    """
+    Build an email-shaped string from the structured-form fields so the
+    existing parser pipeline (regex on the rule-based side, LLM on the
+    multi-agent side) handles it identically to a pasted .txt email.
+
+    Returns "" when title and summary are both empty so the Triage button
+    stays disabled via the same `not raw_text.strip()` check the email
+    mode uses.
+    """
+    title   = (title   or "").strip()
+    summary = (summary or "").strip()
+    if not title and not summary:
+        return ""
+
+    parts: list[str] = []
+    if title:
+        parts.append(f"Subject: {title}")
+        parts.append("")
+    if platform and platform != "Unknown":
+        parts.append(f"Platform: {platform}")
+        parts.append("")
+    if summary:
+        parts.append("Description:")
+        parts.append(summary)
+        parts.append("")
+
+    step_lines = [s.strip() for s in (steps or "").splitlines() if s.strip()]
+    if step_lines:
+        parts.append("Steps to Reproduce:")
+        for i, s in enumerate(step_lines, 1):
+            # Strip user-supplied numbering / bullets so we don't double-number.
+            clean = re.sub(r"^\s*(?:\d+[\.\)]\s*|[-*]\s*)", "", s)
+            parts.append(f"{i}. {clean}")
+        parts.append("")
+
+    return "\n".join(parts).rstrip() + "\n"
+
+
 def save_uploads_to_tmp(uploaded_files) -> list:
     """
     Streamlit gives us in-memory UploadedFile objects. The media sub-agent
@@ -623,19 +692,20 @@ sample_names  = ["(paste your own)"] + [p.name for p in samples]
 with col_main:
     st.markdown('<div class="section-label">Step 1 · Bug report</div>', unsafe_allow_html=True)
 
-    # Compact top-row controls: sample picker + pipeline radio
-    ctrl_pick, ctrl_pipe = st.columns([1, 1])
-    with ctrl_pick:
-        pick = st.selectbox(
-            "Pre-fill from a sample",
-            sample_names,
+    # Top-row controls: input format + pipeline choice
+    ctrl_fmt, ctrl_pipe = st.columns([1, 1])
+    with ctrl_fmt:
+        input_format = st.radio(
+            "Input format",
+            ["Email (.txt)", "Structured form"],
             index=0,
-            key=f"pick_{st.session_state.input_version}",
+            horizontal=True,
+            help=(
+                "Email accepts pasted email text. Structured form is a "
+                "guided alternative — fill title / platform / summary / steps."
+            ),
+            key=f"input_format_{st.session_state.input_version}",
         )
-        default_text = ""
-        if pick != "(paste your own)":
-            default_text = (DATA_DIR / pick).read_text(encoding="utf-8")
-
     with ctrl_pipe:
         pipeline_choice = st.radio(
             "Pipeline",
@@ -647,15 +717,67 @@ with col_main:
             ),
         )
 
-    # Textarea — full width of col_main
-    raw_text = st.text_area(
-        "Bug report email",
-        value=default_text,
-        height=300,
-        placeholder="From: someone@flipkart.com\nSubject: [URGENT] ...\n\nDescribe the bug here...",
-        key=f"input_{pick}_{st.session_state.input_version}",
-        label_visibility="collapsed",
-    )
+    use_form = input_format.startswith("Structured")
+
+    if not use_form:
+        # ── Email mode ─────────────────────────────────────────────────
+        pick = st.selectbox(
+            "Pre-fill from a sample",
+            sample_names,
+            index=0,
+            key=f"pick_{st.session_state.input_version}",
+        )
+        default_text = ""
+        if pick != "(paste your own)":
+            default_text = (DATA_DIR / pick).read_text(encoding="utf-8")
+
+        raw_text = st.text_area(
+            "Bug report email",
+            value=default_text,
+            height=300,
+            placeholder="From: someone@flipkart.com\nSubject: [URGENT] ...\n\nDescribe the bug here...",
+            key=f"input_{pick}_{st.session_state.input_version}",
+            label_visibility="collapsed",
+        )
+    else:
+        # ── Structured form mode ───────────────────────────────────────
+        form_title = st.text_input(
+            "Bug title",
+            placeholder="e.g. [Checkout] App crashes when tapping Proceed to Pay on Android",
+            key=f"form_title_{st.session_state.input_version}",
+        )
+
+        col_plat, _col_sp = st.columns([1, 2])
+        with col_plat:
+            form_platform = st.selectbox(
+                "Platform",
+                ["Android", "iOS", "Web", "Android, iOS", "Unknown"],
+                index=0,
+                key=f"form_platform_{st.session_state.input_version}",
+            )
+
+        form_summary = st.text_area(
+            "Summary",
+            height=120,
+            placeholder="Describe what's broken and what should have happened instead.",
+            key=f"form_summary_{st.session_state.input_version}",
+        )
+
+        form_steps = st.text_area(
+            "Steps to reproduce (one step per line — optional)",
+            height=140,
+            placeholder=(
+                "Open the SLAP app\n"
+                "Go to Cart\n"
+                "Tap Proceed to Pay\n"
+                "(app crashes)"
+            ),
+            key=f"form_steps_{st.session_state.input_version}",
+        )
+
+        raw_text = synthesize_email_from_form(
+            form_title, form_platform, form_summary, form_steps,
+        )
 
     # Attachments — full width, with LARGER previews
     uploaded_files = st.file_uploader(
@@ -738,20 +860,23 @@ if triage_btn:
                     st.markdown(f"{icon} {message}")
 
                 # Defensive: Streamlit's @st.cache_resource may be holding
-                # a HostAgent instance built before on_step existed. Fall
-                # back gracefully and tell the user to restart for live
-                # progress.
+                # a HostAgent instance built before on_step / from_form
+                # existed. Only pass kwargs the cached signature actually
+                # accepts, and warn the user if features got skipped.
                 import inspect
-                if "on_step" in inspect.signature(host.triage).parameters:
-                    result = host.triage(raw_text, image_paths=image_paths, on_step=on_step)
-                else:
+                sig_params = inspect.signature(host.triage).parameters
+                kwargs = {"image_paths": image_paths}
+                if "on_step" in sig_params:
+                    kwargs["on_step"] = on_step
+                if "from_form" in sig_params:
+                    kwargs["from_form"] = use_form
+                if "on_step" not in sig_params or (use_form and "from_form" not in sig_params):
                     st.warning(
-                        "Live step-by-step progress is unavailable because Streamlit is "
-                        "running a cached pipeline build from before the live-progress "
-                        "change. Restart Streamlit "
-                        "(`pkill -f streamlit && streamlit run app.py`) to get live updates."
+                        "Streamlit is running a cached pipeline build from before a "
+                        "recent change. Restart Streamlit "
+                        "(`pkill -f streamlit && streamlit run app.py`) to pick it up."
                     )
-                    result = host.triage(raw_text, image_paths=image_paths)
+                result = host.triage(raw_text, **kwargs)
                 bug      = result.bug
                 sim      = result.similarity
                 severity = result.severity
@@ -770,7 +895,64 @@ if triage_btn:
                 media = None
                 # Rule-based path doesn't run the host agent — add the
                 # quality check inline so the same UI warnings show up.
-                q = detect_quality_issues(bug, MediaResult(findings=[], combined_summary=""))
+                # Pass from_form so structured-form input isn't graded on
+                # email-format compliance.
+                q = detect_quality_issues(
+                    bug,
+                    MediaResult(findings=[], combined_summary=""),
+                    from_form=use_form,
+                )
+                # Rule-based + form: cheap consistency heuristic. The
+                # multi-agent path gets a proper LLM check via the form-
+                # consistency sub-agent; rule-based gets this fallback.
+                # Bar is intentionally high to avoid false-positives on
+                # synonym pairs ([VTON] vs "virtual try-on"): the title
+                # must share ZERO content words with summary AND with
+                # steps (when steps exist), and all involved fields must
+                # be substantial.
+                if use_form:
+                    STOPWORDS = {
+                        "the","a","an","is","are","was","were","be","been","being",
+                        "and","or","but","not","for","with","from","into","over","under",
+                        "of","to","in","on","at","by","as","that","this","these","those",
+                        "have","has","had","do","does","did","will","would","could","should",
+                        "can","may","might","when","if","after","before","then","than",
+                        "i","we","you","he","she","it","they","my","our","your","their",
+                        "out","up","down","off","app","slap","bug","issue","error",
+                    }
+                    def _content_words(s):
+                        return {w for w in re.findall(r"[a-z]+", (s or "").lower())
+                                if len(w) > 2 and w not in STOPWORDS}
+                    tw = _content_words(bug.title)
+                    sw = _content_words(bug.description)
+                    stw = _content_words(" ".join(bug.steps_to_reproduce or []))
+
+                    # Bar set at >= 6 content words each — high enough that
+                    # synonym pairs (e.g. "[VTON]" vs "virtual try-on") almost
+                    # always have at least one accidental collision, low
+                    # enough that genuinely mismatched long submissions
+                    # (like the screenshot case at 15 / 11) still trigger.
+                    title_substantial          = len(tw) >= 6
+                    summary_substantial        = len(sw) >= 6
+                    no_overlap_with_summary    = not (tw & sw)
+                    no_overlap_with_steps      = (not stw) or not (tw & stw)
+                    if (title_substantial
+                            and summary_substantial
+                            and no_overlap_with_summary
+                            and no_overlap_with_steps):
+                        q.append({
+                            "type":             "form_fields_inconsistent",
+                            "severity":         "warning",
+                            "message": (
+                                "The form's title shares no content words with the "
+                                "summary or steps, suggesting they describe different bugs."
+                            ),
+                            "primary_bug": "",
+                            "suggested_action": (
+                                "Refile the form with title, summary, and steps that all "
+                                "describe the same bug."
+                            ),
+                        })
                 if q:
                     draft.triage_notes["quality_issues"] = q
 
@@ -779,6 +961,38 @@ if triage_btn:
             status.update(label="Pipeline failed", state="error")
             st.exception(e)
             st.stop()
+
+    # Stash the result so the priority / component / owner override widgets
+    # below can re-render the same draft without re-running the pipeline.
+    # (Every widget interaction triggers a Streamlit script re-run, during
+    # which triage_btn is False — without this, the result would disappear
+    # the moment the user touches a dropdown.)
+    st.session_state.triage_result = {
+        "bug":             bug,
+        "sim":             sim,
+        "severity":        severity,
+        "draft":           draft,
+        "media":           media,
+        "use_multi_agent": use_multi_agent,
+        "pipeline_label":  pipeline_label,
+    }
+    # Fresh run — drop stale override selections from a previous bug so the
+    # new prediction shows as the dropdown's default.
+    for k in ("edit_priority", "edit_component", "edit_owner"):
+        st.session_state.pop(k, None)
+
+
+# ── Render result (runs for both fresh triage and edit-widget re-runs) ─────
+
+if "triage_result" in st.session_state:
+    r = st.session_state.triage_result
+    bug             = r["bug"]
+    sim             = r["sim"]
+    severity        = r["severity"]
+    draft           = r["draft"]
+    media           = r["media"]
+    use_multi_agent = r["use_multi_agent"]
+    pipeline_label  = r["pipeline_label"]
 
     # ── Headline ────────────────────────────────────────────────────────────
 
@@ -790,12 +1004,27 @@ if triage_btn:
     # input wasn't good enough to triage on.
     quality_issues = draft.triage_notes.get("quality_issues") or []
     if quality_issues:
+        # Lead the banner with the most-relevant message. If any quality
+        # issue is a vague_report we use the "Insufficient info" wording;
+        # otherwise the contradiction message.
+        kinds_present = {q.get("type") for q in quality_issues}
+        if "vague_report" in kinds_present:
+            banner_h4 = "⚠ Insufficient info — please refile"
+            banner_p  = ("This bug report is missing the sections needed for confident triage. "
+                         "Refile with the corrections below.")
+        elif "form_fields_inconsistent" in kinds_present:
+            banner_h4 = "⚠ Form fields describe different bugs"
+            banner_p  = ("The title, summary, and steps appear to describe different bugs. "
+                         "Refile with all three fields aligned to a single bug.")
+        else:
+            banner_h4 = "⚠ This bug cannot be triaged confidently"
+            banner_p  = ("The attached image contradicts the text of the report. "
+                         "Refile with the corrections below.")
         st.markdown(
-            """
+            f"""
             <div class="quality-banner">
-              <h4>⚠ This bug cannot be triaged confidently</h4>
-              <p>The report is missing critical details, or the attached image contradicts the text.
-              Please refile with the corrections below.</p>
+              <h4>{banner_h4}</h4>
+              <p>{banner_p}</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -804,8 +1033,9 @@ if triage_btn:
         for q in quality_issues:
             kind = q.get("type", "issue")
             label = {
-                "vague_report":            "Vague report",
-                "media_contradicts_text":  "Image ⇄ email mismatch",
+                "vague_report":              "Insufficient info",
+                "media_contradicts_text":    "Image ⇄ email mismatch",
+                "form_fields_inconsistent":  "Mixed-up form fields",
             }.get(kind, kind)
 
             msg    = html.escape(q.get("message", ""))
@@ -835,7 +1065,9 @@ if triage_btn:
             for k in list(st.session_state.keys()):
                 if k == "input_version":
                     continue
-                if k.startswith(("input_", "upload_", "pick_", "FormSubmitter")):
+                if k.startswith(("input_", "upload_", "pick_", "form_", "edit_", "FormSubmitter")):
+                    del st.session_state[k]
+                if k == "triage_result":
                     del st.session_state[k]
             st.session_state.input_version = st.session_state.get("input_version", 0) + 1
             st.rerun()
@@ -879,6 +1111,81 @@ if triage_btn:
 
     if sim.duplicate_of:
         st.markdown(f"🔗 Open duplicate: {jira_link(sim.duplicate_of)}")
+
+    # ── Editable overrides ─────────────────────────────────────────────────
+    # The metric tiles above show the model's prediction. The reviewer can
+    # adjust Priority / Component / Owner here before downloading the JSON.
+    # Edits update draft.triage_notes and draft.jira_payload in place so the
+    # downloads at the bottom reflect the corrections.
+
+    st.markdown('<div class="section-label">Edit before filing</div>', unsafe_allow_html=True)
+    st.caption(
+        "Override the model's choices. Downloads below pick up your edits. "
+        "The tiles above always show what the model originally predicted."
+    )
+
+    predicted_prio  = prio if prio in PRIORITY_OPTIONS else "P2"
+    predicted_comp  = draft.triage_notes.get("jira_component") or "bugs"
+    if predicted_comp not in COMPONENT_OPTIONS:
+        predicted_comp = "bugs"
+    predicted_owner = sim.suggested_owner or ""
+
+    ec1, ec2, ec3 = st.columns(3)
+    with ec1:
+        edited_prio = st.selectbox(
+            "Priority",
+            PRIORITY_OPTIONS,
+            index=PRIORITY_OPTIONS.index(predicted_prio),
+            key="edit_priority",
+            help=f"Model predicted: {predicted_prio}",
+        )
+    with ec2:
+        edited_comp = st.selectbox(
+            "Component",
+            COMPONENT_OPTIONS,
+            index=COMPONENT_OPTIONS.index(predicted_comp),
+            key="edit_component",
+            help=f"Model predicted: {predicted_comp}",
+        )
+    with ec3:
+        edited_owner = st.text_input(
+            "Owner",
+            value=predicted_owner,
+            placeholder="(unassigned)",
+            key="edit_owner",
+            help=f"Model suggested: {predicted_owner or '(none)'}",
+        )
+
+    # ── Patch draft so JSON downloads at the bottom reflect overrides ─────
+    edited_owner_clean = edited_owner.strip() or None
+
+    draft.triage_notes["team"]             = TEAM_FOR_COMPONENT[edited_comp]
+    draft.triage_notes["jira_component"]   = None if edited_comp == "bugs" else edited_comp
+    draft.triage_notes["owner_suggestion"] = edited_owner_clean
+    draft.triage_notes["priority"]         = edited_prio
+    draft.triage_notes["severity"]         = SEVERITY_FOR_PRIORITY[edited_prio]
+
+    fields = draft.jira_payload.setdefault("fields", {})
+    fields["priority"] = {"id": PRIORITY_ID_MAP[edited_prio]}
+    # Severity is filed under the custom field on FLIPPI.
+    fields["customfield_10331"] = {"value": SEVERITY_FOR_PRIORITY[edited_prio]}
+    if edited_comp == "bugs":
+        fields.pop("components", None)
+    else:
+        comp_entry = {"name": edited_comp}
+        if edited_comp in COMPONENT_ID_MAP:
+            comp_entry["id"] = COMPONENT_ID_MAP[edited_comp]
+        fields["components"] = [comp_entry]
+
+    # Audit trail — record that a human edited this, so a downstream reader
+    # can tell the JSON is a corrected draft, not the raw model output.
+    overrides = {}
+    if edited_prio  != predicted_prio:   overrides["priority"]  = {"from": predicted_prio,  "to": edited_prio}
+    if edited_comp  != predicted_comp:   overrides["component"] = {"from": predicted_comp,  "to": edited_comp}
+    if edited_owner_clean != (predicted_owner or None):
+        overrides["owner"] = {"from": predicted_owner or None, "to": edited_owner_clean}
+    if overrides:
+        draft.triage_notes["human_overrides"] = overrides
 
     # ── Tabs ────────────────────────────────────────────────────────────────
     # Summary tab dropped — its content (justification, scoring path, owner
