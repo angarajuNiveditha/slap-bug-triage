@@ -9,11 +9,11 @@ finds duplicates, suggests an owner, scores severity, and outputs a
 dev-ready Jira ticket draft as JSON.
 
 **Three pipelines exist:**
-- `run_multi_agent.py` — **primary**. Multi-agent (Astral host + 5 sub-agents: media, parser, embeddings, dedup, triage) running on Claude Code headless mode (`claude -p`). Accepts image attachments. No `ANTHROPIC_API_KEY` required. ~90–150 s per bug.
+- `run_multi_agent.py` — **primary**. Multi-agent (Astral host + 6 sub-agents: media, parser, form-consistency, embeddings, dedup, triage) running on Claude Code headless mode (`claude -p`). Accepts image attachments. No `ANTHROPIC_API_KEY` required. ~90–150 s per bug.
 - `run_agent.py` — local simulation harness, fully rule-based (regex + TF-IDF + multi-layer keyword scorer). ~35 ms per bug. Text-only. Used for fast iteration and as a deterministic baseline.
 - `main.py` — original Anthropic SDK design. Blocked on `ANTHROPIC_API_KEY`; kept as production-shape reference.
 
-**Front-end:** `app.py` is a Streamlit UI with a pipeline toggle and an `st.file_uploader` for image attachments. The multi-agent pipeline reads attached screenshots via the media sub-agent. Run with `streamlit run app.py` → `localhost:8501`.
+**Front-end:** `app.py` is a Streamlit UI with two input modes (pasted email **or** structured form: title / platform / summary / steps), a pipeline toggle, an `st.file_uploader` for image / video attachments, and editable Priority / Component / Owner widgets so the reviewer can override the model's choices before downloading the Jira draft JSON. The multi-agent pipeline reads attached media via the media sub-agent. Run with `streamlit run app.py` → `localhost:8501`.
 
 **This is a prototype only. It never writes to Jira. All Jira access is read-only.**
 
@@ -41,9 +41,10 @@ slap-bug-triage/
 │   │   ├── host_agent.py            # Astral — coordinates sub-agents
 │   │   ├── subagent_media.py        # images → SLAP-aware findings
 │   │   ├── subagent_parser.py       # email + media → BugReport
+│   │   ├── subagent_form_consistency.py  # form-only: are title/summary/steps the same bug?
 │   │   ├── subagent_embeddings.py   # rank top-K similar past bugs
 │   │   ├── subagent_dedup.py        # final duplicate decision (≥ 0.80 conf)
-│   │   └── subagent_triage.py       # priority / severity assignment
+│   │   └── subagent_triage.py       # priority assignment (3-tier: P0/P1/P2)
 │   ├── claude_cli.py            # subprocess wrapper around `claude -p`
 │   │
 │   │  ── Rule-based simulation harness (run_agent.py uses these) ──
@@ -290,25 +291,32 @@ Each sub-agent is a focused Claude prompt with one responsibility. The
 host calls them in this order:
 
 ```
-bug input (email + optional images)
+bug input (email OR structured form + optional images / videos)
     │
     ▼
-[1] subagent_media        — only if attachments present
+[1] subagent_media           — only if attachments present
     │     ↳ one-line summary folded into the email body
     ▼
-[2] subagent_parser       — email + media findings → BugReport
+[2] subagent_parser          — email + media findings → BugReport
     │
     ▼
-[3] subagent_embeddings   — 300 historical Jira bugs + new bug → top-K ranked
-    │                       candidates + suggested owner
+[2b] subagent_form_consistency — only if from_form=True
+    │                             refile if title/summary/steps mismatch
     ▼
-[4] subagent_dedup        — focused dup/no-dup decision over the top-K
-    │                       (only fires if confidence ≥ 0.80)
+[3] subagent_embeddings      — 300 historical Jira bugs + new bug → top-K ranked
+    │                          candidates + suggested owner
     ▼
-[5] subagent_triage       — BugReport + similar bugs → SeverityResult
+[4] subagent_dedup           — focused dup/no-dup decision over the top-K
+    │                          (only fires if confidence ≥ 0.80)
+    ▼
+[5] subagent_triage          — BugReport + similar bugs → SeverityResult
+    │                          3-tier ladder: P0 / P1 / P2
+    ▼
+agent_ticket_builder         — assembles Jira ADF + triage_notes JSON
     │
     ▼
-agent_ticket_builder      — assembles Jira ADF + triage_notes JSON
+human override (UI)          — reviewer edits Priority / Component / Owner;
+                              audit trail recorded in triage_notes.human_overrides
 ```
 
 ### Media sub-agent (images)
@@ -476,13 +484,23 @@ this machine (`which claude` should return a path).
 
 ---
 
-## Current status (as of 2026-06-16)
+## Current status (as of 2026-06-24)
 
-- `run_multi_agent.py` fully working end-to-end with Astral host + 5 sub-agents
-  (media, parser, embeddings, dedup, triage), ~90–150 s/bug, no API key required
+- `run_multi_agent.py` fully working end-to-end with Astral host + 6 sub-agents
+  (media, parser, form-consistency, embeddings, dedup, triage), ~90–150 s/bug,
+  no API key required
 - `run_agent.py` rule-based simulation harness still fully working (~35 ms/bug)
-- `app.py` Streamlit UI: pipeline toggle, `st.file_uploader` for image
-  attachments, dedicated "Media findings" tab when images are present
+- `app.py` Streamlit UI: input format toggle (Email vs Structured form),
+  pipeline toggle, `st.file_uploader` for image / video attachments, dedicated
+  "Media findings" tab when attachments are present, editable Priority /
+  Component / Owner widgets with `human_overrides` audit trail
+- Triage ladder is 3-tier (P0 / P1 / P2 — no P3). Vague reports route to
+  "Insufficient info — refile" instead of dropping to P3
+- Component classifier validated at 78.7% accuracy on 300 real FLIPPI bugs
+  (Backend 86%, BE_Labs 81%, DS 78%, UI 70%)
+- Form-consistency sub-agent flags title/summary/steps mismatches when
+  `from_form=True`; multi-agent path uses Claude, rule-based has a conservative
+  word-overlap heuristic fallback
 - `slap_context/SLAP_KNOWLEDGE.md` extracted from the SLAP-2026 Figma file
   (393 frames, 198 unique screen names, 1117 unique strings)
 - `slap_context/reference_screens/` holds 16 labeled Figma PNGs — gitignored
