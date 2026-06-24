@@ -42,11 +42,12 @@ from ..agent_scorer         import SeverityResult
 from ..agent_ticket_builder import TicketDraft, build_ticket
 from ..tfidf_similarity     import SimilarBug, SimilarityResult
 
-from .subagent_dedup       import DedupResult, decide_duplicate
-from .subagent_embeddings  import EmbeddingsEngine, EmbeddingsResult
-from .subagent_media       import MediaResult, process_attachments
-from .subagent_parser      import parse_bug_report
-from .subagent_triage      import score_severity
+from .subagent_dedup            import DedupResult, decide_duplicate
+from .subagent_embeddings       import EmbeddingsEngine, EmbeddingsResult
+from .subagent_form_consistency import check_form_consistency
+from .subagent_media            import MediaResult, process_attachments
+from .subagent_parser           import parse_bug_report
+from .subagent_triage           import score_severity
 
 
 @dataclass
@@ -89,7 +90,11 @@ def _section_present(raw_lower: str, patterns: list) -> bool:
     return any(p in raw_lower for p in patterns)
 
 
-def detect_quality_issues(bug: BugReport, media: "MediaResult") -> list:
+def detect_quality_issues(
+    bug: BugReport,
+    media: "MediaResult",
+    from_form: bool = False,
+) -> list:
     """
     Return a list of {type, severity, message, suggested_action} dicts when
     the report's quality is too low for a confident triage call.
@@ -100,9 +105,13 @@ def detect_quality_issues(bug: BugReport, media: "MediaResult") -> list:
       (Impact, Reproducibility, Environment, etc.). We check the raw text
       rather than parsed fields because Claude will sometimes infer values
       for missing sections; the format check has to be on the raw input.
+      **Skipped entirely when from_form=True** — structured-form input is
+      shorter than email by design, so email-format heuristics don't apply.
 
     - media_contradicts_text — any image whose media-agent findings
-      disagree with the email body.
+      disagree with the email body. Still applies to form input, since an
+      attached image conflicting with the text is a real problem
+      regardless of how the text was entered.
 
     These get folded into triage_notes.quality_issues and surfaced in the
     UI so the reporter refiles with the missing detail before the draft
@@ -110,41 +119,43 @@ def detect_quality_issues(bug: BugReport, media: "MediaResult") -> list:
     """
     issues: list = []
 
-    raw       = (bug.raw_text or "").strip()
-    raw_lower = raw.lower()
-    missing   = []
+    # Email-format compliance — only meaningful for free-form email input.
+    if not from_form:
+        raw       = (bug.raw_text or "").strip()
+        raw_lower = raw.lower()
+        missing   = []
 
-    # Very short reports are auto-vague (don't even check sections — there
-    # isn't enough text to evaluate).
-    if len(raw) < VAGUE_TEXT_THRESHOLD:
-        missing.append(f"the report body is under ~{VAGUE_TEXT_THRESHOLD} characters")
+        # Very short reports are auto-vague (don't even check sections — there
+        # isn't enough text to evaluate).
+        if len(raw) < VAGUE_TEXT_THRESHOLD:
+            missing.append(f"the report body is under ~{VAGUE_TEXT_THRESHOLD} characters")
 
-    # Format compliance: each required section must be present in the raw email.
-    for label, patterns in REQUIRED_SECTION_PATTERNS:
-        if not _section_present(raw_lower, patterns):
-            missing.append(f"no '{label}' section in the email")
+        # Format compliance: each required section must be present in the raw email.
+        for label, patterns in REQUIRED_SECTION_PATTERNS:
+            if not _section_present(raw_lower, patterns):
+                missing.append(f"no '{label}' section in the email")
 
-    # If the parser failed to extract any reproduction steps (even though the
-    # email may have had a 'Steps' header), count it as a missing detail.
-    if bug.steps_to_reproduce == []:
-        already_flagged_steps = any("Steps to Reproduce" in m for m in missing)
-        if not already_flagged_steps:
-            missing.append("no reproduction steps could be extracted")
+        # If the parser failed to extract any reproduction steps (even though the
+        # email may have had a 'Steps' header), count it as a missing detail.
+        if bug.steps_to_reproduce == []:
+            already_flagged_steps = any("Steps to Reproduce" in m for m in missing)
+            if not already_flagged_steps:
+                missing.append("no reproduction steps could be extracted")
 
-    if len(missing) >= MAX_MISSING_SECTIONS:
-        issues.append({
-            "type":             "vague_report",
-            "severity":         "warning",
-            "message": (
-                "The report is not following the expected format: "
-                + "; ".join(missing) + "."
-            ),
-            "suggested_action": (
-                "Please refile with explicit sections for Steps to Reproduce, "
-                "Expected vs Actual, Impact, Reproducibility, and Environment "
-                "(platform/version/device). All five are required for confident triage."
-            ),
-        })
+        if len(missing) >= MAX_MISSING_SECTIONS:
+            issues.append({
+                "type":             "vague_report",
+                "severity":         "warning",
+                "message": (
+                    "The report is not following the expected format: "
+                    + "; ".join(missing) + "."
+                ),
+                "suggested_action": (
+                    "Please refile with explicit sections for Steps to Reproduce, "
+                    "Expected vs Actual, Impact, Reproducibility, and Environment "
+                    "(platform/version/device). All five are required for confident triage."
+                ),
+            })
 
     # 2. Image / text contradictions — trust the media sub-agent's semantic
     #    judgment (contradicts_email_claim). It already has the full email
@@ -198,6 +209,7 @@ class HostAgent:
         raw_text: str,
         image_paths: Optional[list] = None,
         on_step: Optional[callable] = None,
+        from_form: bool = False,
     ) -> HostResult:
         """
         Run the full multi-agent pipeline on one bug.
@@ -233,6 +245,25 @@ class HostAgent:
         print("  [host] parser sub-agent...")
         bug = parse_bug_report(raw_text, media_summary=media.combined_summary or None)
         emit("parser:done", f"Parsed title: {(bug.title or '')[:72]}")
+
+        # ── Step 2b: form consistency (only when from_form=True) ────────
+        # The form lets the reporter fill title / summary / steps
+        # independently — unlike a free-form email, these can describe
+        # different bugs entirely. Catch obvious mismatches before they
+        # propagate downstream as a confidently-wrong triage.
+        form_consistency_issue: Optional[dict] = None
+        if from_form:
+            emit("consistency:start", "Form-consistency sub-agent — checking title/summary/steps alignment…")
+            print("  [host] form-consistency sub-agent...")
+            form_consistency_issue = check_form_consistency(
+                bug.title, bug.description, bug.steps_to_reproduce,
+            )
+            if form_consistency_issue:
+                emit("consistency:done", "Form fields inconsistent — will flag for refile")
+            else:
+                emit("consistency:done", "Form fields consistent")
+        else:
+            emit("consistency:skipped", "Email input — skipping form-consistency check")
 
         # ── Step 3: embeddings ──────────────────────────────────────────
         if not self._indexed:
@@ -317,7 +348,9 @@ class HostAgent:
             draft.triage_notes["duplicate_reasoning"] = dup.duplicate_reasoning
 
         # ── Step 9: quality checks (vague report + media-vs-text conflict) ──
-        quality_issues = detect_quality_issues(bug, media)
+        quality_issues = detect_quality_issues(bug, media, from_form=from_form)
+        if form_consistency_issue:
+            quality_issues.append(form_consistency_issue)
         if quality_issues:
             draft.triage_notes["quality_issues"] = quality_issues
 

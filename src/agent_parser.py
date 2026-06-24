@@ -240,36 +240,166 @@ def _extract_component(text: str, title: str) -> str:
     ]):
         return 'immersive'
 
+    # --- UI: React Native / iOS / Android frontend layer ---
+    # Checked BEFORE Backend-Labs / DS / Backend because platform-prefixed
+    # bugs ("[iOS] Styledrops_App is crashing", "[RN] Onboarding design")
+    # are tagged UI in Jira even when their surface area belongs to another
+    # team. Only Immersive (native AR / VTO SDK) is checked earlier — those
+    # are deeper than the React Native layer.
+    if any(w in c for w in [
+        # Original
+        'login screen flash', 'cold start', 'cold storage', 'pbxproj',
+        '[rn][', 'react native', 'native locationmodule', 'category pills',
+        'alignment', 'user input not stacking', 'submit profile',
+        'profile for new user', 'screen flashes', 'ios ui', 'ios: login',
+        'image not loading', 'broken image', 'product images not loading',
+        'broken image icon', 'image never loads', 'no retry', 'no placeholder',
+        # Platform prefixes — heavily used in real Jira titles
+        '[ios]', '[android]', '[native]', '[rn]', '[ios ]',
+        'ios_', 'ios:', 'android_',
+        # App-on-platform crashes (UI/native layer crashes, distinct from
+        # "checkout crashed" backend symptoms — the platform prefix or
+        # native-app phrasing identifies these as UI)
+        'app is crashing', 'crashing while', 'crashing after',
+        'app crashing for', 'app crashing on',
+        # Visual / layout / spacing — the dominant UI bug pattern
+        'extra space', 'white space', 'extra white', 'huge space',
+        'horizontal extra', 'between two words',
+        'overlapping', 'overlap', 'overlapped', 'overlaping',
+        'spacing', 'not properly spaced', 'spaced',
+        'not aligned', 'aligned correctly', "don't stay aligned",
+        'looking little odd', 'looks off', 'looks odd', 'looks off for',
+        'design looks', 'design issues', 'design changes',
+        'patchwork design',
+        # Element visibility / hidden
+        'not visible', 'completely visible', 'hidden',
+        'is hidden', 'visibility',
+        # Click / tap / gesture (touch interaction belongs to UI layer)
+        'not clickable', 'is not clickable', 'unclickable',
+        'not tappable', 'tappable',
+        'swipe', 'gesture', 'swipe down', 'swipe to',
+        'scroll', 'scrolling', 'pull-to-refresh',
+        'touch target', 'restricted input touch',
+        'click doesn’t work', 'click doesnt work',
+        'product itself is not clickable', 'not clickable inside',
+        # UI components / containers — keep specific phrases. Bare
+        # "bottom sheet" / "menu" / "icon" appear in BE_Labs bugs too
+        # (Social Finds bottomsheets, Styledrops menus) so we only fire
+        # UI when the phrasing is clearly about the UI behaviour.
+        'inside bottomsheet', 'bottomsheet handling',
+        'popup', 'dropdown', 'drop-down',
+        'keyboard', 'hamburger menu',
+        'textbox', 'text input', 'textinput', 'textinputbar',
+        'input bar', 'input field', 'name input',
+        'icons', 'iconography',
+        # Native build / iOS / Android specifics
+        'cocoapods', 'xcode', 'objectversion', 'gradle',
+        # Animation / visual state
+        'animation', 'frozen animation', 'animations',
+        'flashing', 'flickers', 'flickering',
+        # Image / cropping (visual side, distinct from "image not loading"
+        # which we already have)
+        'image cropping', 'image cropper', 'cropper', 'crop tool',
+        'pixelated', 'getting pixelated', 'getting clipped',
+        'images getting cropped',
+        # UI text/copy issues — visual presentation of text on the UI
+        'text overlapping', 'text on ui', 'text is overlapping',
+        'extra space below', 'space below the answers',
+        'space between two', 'strange symbols',
+        'lower case', 'letter case', 'in title case',
+        # UI behaviour quality
+        'ui feeling', 'ui feels', 'ui got messed', 'ui issue',
+        'ui bug', 'ui validation', 'ui is broken',
+        'choppy', 'clunky',
+        # Visual progress / step indicators (onboarding UI)
+        'step icons', 'progress indicator', 'progress indicators',
+        'missing visual', 'visual progress',
+        # Hamburger / settings / labels
+        'incorrect labels', 'labels are',
+        # Common phrasings of "show all" / "see all" UI controls
+        'show all review', 'view all bottom sheet', 'view more reviews',
+        'view all offers',
+        # Image visibility on cards (UI rendering, not data)
+        # NB: "product image are missing in the styledrops" is REMOVED from
+        # UI — it's a BE_Labs ownership question (Styledrops feature owns
+        # its product cards' data), not a UI rendering one.
+        'product images are not visible', 'images are not completely visible',
+        # OTP input UX (form rather than auth itself)
+        'otp input field lacks', 'otp field',
+        # Open / navigation issues — keep specific to avoid eating deeplink
+        # / link-routing bugs that are Backend (not UI)
+        'not opening any',
+        # Onboarding UI design (vs Backend onboarding flow)
+        'onboarding page design', 'onboarding step icons',
+        'onboarding step', 'onboarding flow design',
+    ]):
+        return 'UI'
+
     # --- BE_Labs: experimental ML features, Feed ML, VTON, Social Finds, Review Synth ---
     if any(w in c for w in [
+        # Original features
         'vton', 'virtual try', 'social finds', 'review synth', 'review synthesis',
         'decoded looks', 'complete your look', 'style drops', 'q2p',
         'machine identity', 'draping', 'vton usage', 'gender mismatch',
         'vton onboarding', 'personaaddedat', 'dao related',
+        # Real Jira titles use "Styledrops" / "styledrops" / "[StyleDrops]"
+        # (no whitespace) — the original 'style drops' did NOT catch these.
+        'styledrops', 'style_drops', '[styledrops]',
+        # Vibes Player feature (visible in slap_context/SLAP_KNOWLEDGE.md)
+        'vibe ', 'vibes', 'vibe api', 'vibes api', 'vibes player',
+        # AI-generation / rendering quirks specific to BE_Labs surfaces
+        'ai generation', 'ai rendering', 'avatar generation', 'enhanced image',
+        # Internal infra dashboards/services owned by BE_Labs
+        'cosmos', 'moodboard', 'frame status', 'frames status',
+        # Reel / send-content social ingestion
+        'sending reel', 'send reel', 'after sending reel',
+        # Other Styledrops-context vocabulary
+        'liked drop', 'liked drops', 'drops are showing', 'drop ready',
+        'generating your drops', 'your drops',
+        # Specific phrases that route BE_Labs even when they mention edison
+        # (edison alone is Backend infra; in styledrops/vibes context it's BE_Labs)
+        'styledrops edison', 'notifying edison',
     ]):
         return 'Backend-Labs'
 
     # --- DS: data science, model quality, NPS, product page analytics ---
     if any(w in c for w in [
+        # Original
         'nps', '%positive', 'product page discrepancy', 'product title discrepancy',
         'discrepancy in product title', 'model quality', 'data science',
         'ranking quality', 'recommendation quality',
+        # Result quality / relevance (most common DS phrasing in real bugs)
+        'wrong result', 'showing wrong result', "results weren't shown",
+        'results not shown', 'wrong response', 'no results',
+        'got only', 'only 2 results',
+        'relevance', 'relevant', 'irrelevant',
+        # Summary/suggestion mismatches
+        'summary not matching', 'suggestion not matching',
+        'summary and suggestion', 'wrong summary',
+        'old query', 'old products', 'stale results',
+        'product suggestion is missing', 'product suggestions is',
+        'product suggestions are', 'product suggestion missing',
+        # Model behaviour / quality
+        'failed to answer', 'model failed', 'bot is failed',
+        'general intelligence', 'grounding',
+        'inappropriate', 'unsafe request',
+        'prompt still needs',
+        # Content presentation owned by DS (text wrap, tables, scope mismatches)
+        'text cut off', 'showing tables', 'tabular', 'tables',
+        'hyperlink instead', 'bad state message',
+        'scanning the inventory',
+        # Scope/range mismatch
+        'above price range but results are for below',
+        'changed the context', 'context to',
+        'gender neutral, results',
+        # Specific DS-owned response failures
+        'developed by google',
     ]):
         return 'DS'
 
-    # --- UI: React Native / iOS / Android frontend layer ---
-    if any(w in c for w in [
-        'login screen flash', 'cold start', 'cold storage', 'pbxproj',
-        '[rn][', 'react native', 'native locationmodule', 'category pills',
-        'alignment', 'user input not stacking', 'submit profile', 'profile for new user',
-        'screen flashes', 'ios ui', 'ios: login', 'image not loading', 'broken image',
-        'product images not loading', 'broken image icon', 'image never loads',
-        'no retry', 'no placeholder',
-    ]):
-        return 'UI'
-
     # --- BE_Flippi: core backend — chat, search, cart, checkout, auth, infra ---
     if any(w in c for w in [
+        # Original
         'checkout', 'proceed to pay', 'cart', 'payment', 'add to cart',
         'search', 'recommendation', 'product listing', 'price', 'delivery',
         'session', 'login', 'auth', 'otp', 'failed to verify', 'onboarding',
@@ -277,6 +407,12 @@ def _extract_component(text: str, title: str) -> str:
         'chat', 'ai chat', 'feed', 'dedup', 'journey continuation',
         'sources widget', 'profile update', 'signup', 'order', 'bot',
         'summary without products', 'reasons to buy', 'product card',
+        # Modest additions for the 16 Backend bugs that fell through to "bugs"
+        'log level', 'logs', 'stability and reliability',
+        'conversation', 'conversation title', 'conversation id',
+        'recent conversations',
+        're-arch', 'rearch', 'product compare', 'da flow',
+        'product compare card',
     ]):
         return 'Backend'
 
