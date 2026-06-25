@@ -51,6 +51,19 @@ from src.agents.subagent_media  import (
 JIRA_BASE_URL = os.environ.get("JIRA_BASE_URL", "https://flipkart.atlassian.net")
 DATA_DIR      = Path(__file__).parent / "data"
 
+# ── Manager exceptions ─────────────────────────────────────────────────────
+# People who can be assigned bugs in any component regardless of which team
+# the empirical assignee-history derivation puts them in. They show up in the
+# Owner dropdown labelled "Manager" so it's obvious the assignment isn't
+# scoped to a particular team.
+#
+# Extend this set when new managers are identified — purely a display /
+# routing-flexibility override; the underlying team_roster JSON is
+# unchanged so model-side suggestions still use the empirical data.
+MANAGER_NAMES = {
+    "Yatin Grover",
+}
+
 # ── Editable-output config ─────────────────────────────────────────────────
 # These power the override widgets that appear under the metric tiles so a
 # reviewer can correct the model's choices before downloading the JSON.
@@ -301,6 +314,40 @@ st.markdown(
       div[data-baseweb="select"] > div {
           border-radius: 12px !important;
           border-color: #F0EFEB !important;
+      }
+
+      /* Larger edit-widgets in the "Edit before filing" section.
+         Targets selectboxes that live inside an .edit-widgets-section
+         marker div emitted right before the editable Priority / Component
+         / Owner widgets. */
+      .edit-widgets-section + div [data-testid="stSelectbox"] label,
+      .edit-widgets-section ~ div [data-testid="stSelectbox"] label,
+      .edit-widgets-section + div [data-testid="stTextInput"] label,
+      .edit-widgets-section ~ div [data-testid="stTextInput"] label {
+          font-size: 15px !important;
+          font-weight: 600 !important;
+          color: #18181B !important;
+      }
+      .edit-widgets-section + div div[data-baseweb="select"] > div,
+      .edit-widgets-section ~ div div[data-baseweb="select"] > div {
+          min-height: 56px !important;
+          padding: 10px 14px !important;
+          font-size: 15.5px !important;
+          border-radius: 14px !important;
+          border-color: #FBCFE0 !important;
+          background: #FFFFFF !important;
+          box-shadow: 0 4px 14px -8px rgba(225,29,116,0.18) !important;
+      }
+      .edit-widgets-section + div div[data-baseweb="select"] > div:hover,
+      .edit-widgets-section ~ div div[data-baseweb="select"] > div:hover {
+          border-color: #E11D74 !important;
+      }
+      .edit-widgets-section + div [data-testid="stTextInput"] input,
+      .edit-widgets-section ~ div [data-testid="stTextInput"] input {
+          min-height: 56px !important;
+          padding: 10px 14px !important;
+          font-size: 15.5px !important;
+          border-radius: 14px !important;
       }
 
       /* ── Tabs (underline-on-active, no boxes) ─────────────────────── */
@@ -979,7 +1026,8 @@ if triage_btn:
     # Fresh run — drop stale override selections from a previous bug so the
     # new prediction shows as the dropdown's default.
     for k in ("edit_priority", "edit_component", "edit_owner",
-              "edit_owner_choice", "edit_owner_jira_query", "edit_owner_jira_pick"):
+              "edit_owner_choice", "edit_owner_jira_query", "edit_owner_jira_pick",
+              "draft_approved", "btn_approve_draft", "btn_publish_jira"):
         st.session_state.pop(k, None)
 
 
@@ -1182,7 +1230,11 @@ if "triage_result" in st.session_state:
             unsafe_allow_html=True,
         )
 
-    ec1, ec2, ec3 = st.columns(3)
+    # Marker div the CSS targets to enlarge the widgets in this section.
+    st.markdown('<div class="edit-widgets-section"></div>', unsafe_allow_html=True)
+
+    # Row 1: Priority + Component side by side (short values).
+    ec1, ec2 = st.columns(2)
     with ec1:
         edited_prio = st.selectbox(
             "Priority",
@@ -1199,6 +1251,9 @@ if "triage_result" in st.session_state:
             key="edit_component",
             help=f"Model predicted: {predicted_comp}",
         )
+
+    # Row 2: Owner full-width (longest values — "Name · Team" can be 40+ chars).
+    ec3 = st.container()
     with ec3:
         # ── Owner picker — Jira-style searchable dropdown ─────────────
         # Source: the team roster derived from historical Jira assignees
@@ -1220,21 +1275,30 @@ if "triage_result" in st.session_state:
         except Exception:
             team_roster = {}
 
-        # Build a flat sorted list of unique engineers, with team annotated.
+        # Build a flat list of unique engineers, with team annotated.
+        # Managers get a "Manager" team label so they appear cross-team
+        # in the dropdown (any bug can be assigned to them).
         engineer_to_team: dict[str, str] = {}
         for team, members in team_roster.items():
             for m in members:
                 name = m.get("name")
-                if name and name not in engineer_to_team:
-                    engineer_to_team[name] = team
+                if not name or name in engineer_to_team:
+                    continue
+                engineer_to_team[name] = "Manager" if name in MANAGER_NAMES else team
 
         # Ensure the model-suggested owner is always selectable even if
         # somehow not in the roster (defensive).
         if predicted_owner and predicted_owner not in engineer_to_team:
-            engineer_to_team[predicted_owner] = "?"
+            engineer_to_team[predicted_owner] = (
+                "Manager" if predicted_owner in MANAGER_NAMES else "?"
+            )
 
-        # Sorted by name so the search-as-you-type lands intuitively.
-        owner_options = sorted(engineer_to_team.keys(), key=str.lower)
+        # Sort: managers first (any-team), then alphabetical within each group.
+        # Within-group alphabetical sort plays nicely with search-as-you-type.
+        owner_options = sorted(
+            engineer_to_team.keys(),
+            key=lambda n: (0 if engineer_to_team[n] == "Manager" else 1, n.lower()),
+        )
 
         # Default to the suggested owner if present, else first entry.
         if predicted_owner and predicted_owner in owner_options:
@@ -1492,4 +1556,33 @@ if "triage_result" in st.session_state:
                 file_name=f"ticket_draft_{pipeline_label.replace(' ', '_')}.json",
                 mime="application/json",
                 use_container_width=True,
+            )
+
+    # ── Approve & Publish (prototype demo) ─────────────────────────────────
+    # Approve gates Publish-to-Jira. Publish itself is intentionally a no-op
+    # in this prototype — the project's hard constraint is read-only Jira,
+    # so the button exists only to demonstrate where production wiring would
+    # plug in. State is per-bug via st.session_state, reset on every fresh
+    # triage by the cleanup loop above.
+
+    st.markdown('<div class="section-label">Step 3 · Approve &amp; file</div>', unsafe_allow_html=True)
+
+    if not st.session_state.get("draft_approved"):
+        st.caption(
+            "Review the metric tiles, override Priority / Component / Owner above if needed, "
+            "then approve the draft to enable Publish-to-Jira."
+        )
+        if st.button("✓ Approve this draft", type="primary", use_container_width=True, key="btn_approve_draft"):
+            st.session_state["draft_approved"] = True
+            st.rerun()
+    else:
+        st.success("✓ Draft approved — ready to file.")
+        if st.button("📤 Publish to Jira", type="primary", use_container_width=True, key="btn_publish_jira"):
+            # Intentionally a no-op for the prototype. Production would call
+            # JiraClient.create_issue() here (which doesn't exist yet — the
+            # client is deliberately read-only). Show a non-committal toast
+            # so the click feels acknowledged without misrepresenting state.
+            st.toast(
+                "📤 Publish-to-Jira clicked — UI demo only; no Jira write happens in this prototype.",
+                icon="ℹ",
             )
