@@ -355,19 +355,34 @@ st.markdown(
           margin-bottom: 6px !important;
       }
 
-      /* Selectbox value (the displayed selected text): big, bold (mtile-value) */
+      /* Selectbox value (the displayed selected text): big, bold (mtile-value).
+         Sized so 20px-bold text isn't clipped at top/bottom — needs enough
+         line-height and vertical padding, plus right-padding to leave room
+         for the dropdown chevron icon. */
       [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div {
-          font-size: 22px !important;
+          font-size: 20px !important;
           font-weight: 700 !important;
           color: #18181B !important;
-          line-height: 1.15 !important;
+          line-height: 1.4 !important;
           letter-spacing: -0.3px !important;
-          min-height: 46px !important;
-          padding: 6px 12px !important;
+          min-height: 60px !important;
+          padding: 14px 36px 14px 14px !important;
           border-radius: 10px !important;
           border: 1px solid transparent !important;
           background: transparent !important;
           box-shadow: none !important;
+          overflow: visible !important;
+      }
+      /* Also target deeper nested value wrappers in the baseweb select tree
+         so the rendered text picks up the larger size + line-height. */
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div > div,
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] [class*="ValueContainer"],
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] [class*="SingleValue"] {
+          font-size: 20px !important;
+          line-height: 1.4 !important;
+          overflow: visible !important;
+          white-space: nowrap !important;
+          text-overflow: ellipsis !important;
       }
       [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div:hover {
           background: #FFFFFF !important;
