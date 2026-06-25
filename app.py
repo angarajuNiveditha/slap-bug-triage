@@ -350,6 +350,28 @@ st.markdown(
           border-radius: 14px !important;
       }
 
+      /* Static "Duplicate-of" tile — sits in the same row as the editable
+         Priority / Component widgets, so it needs to look like a tile but
+         render plain HTML (it isn't editable). */
+      .static-tile { padding: 4px 0; }
+      .static-tile-label {
+          font-size: 14px; font-weight: 600; color: #18181B;
+          margin-bottom: 8px; line-height: 1.4;
+      }
+      .static-tile-value {
+          font-size: 22px; font-weight: 700; color: #18181B;
+          line-height: 1.15; letter-spacing: -0.3px;
+          min-height: 56px;
+          display: flex; align-items: center;
+          padding: 10px 14px;
+          border: 1px solid #FBE0EC;
+          border-radius: 14px;
+          background: linear-gradient(135deg, #FFF5F8 0%, #FFFFFF 60%);
+      }
+      .static-tile-sub {
+          font-size: 12px; color: #78716C; margin-top: 6px;
+      }
+
       /* ── Tabs (underline-on-active, no boxes) ─────────────────────── */
       .stTabs [data-baseweb="tab-list"] {
           gap: 4px; border-bottom: 1px solid #F0EFEB;
@@ -613,18 +635,6 @@ def save_uploads_to_tmp(uploaded_files) -> list:
     return saved
 
 
-# ── Sidebar ─────────────────────────────────────────────────────────────────
-
-with st.sidebar:
-    st.markdown("### About")
-    st.markdown(
-        "SLAP Bug Triage takes a bug-report email (plus optional media) "
-        "and drafts a Jira ticket — with priority, team routing, duplicate "
-        "detection, and owner suggestion."
-    )
-    st.markdown("**No tickets are filed automatically.** A human reviews and files.")
-
-
 # ── Hero (clean, SLAP-style) ───────────────────────────────────────────────
 
 st.markdown(
@@ -651,10 +661,6 @@ st.markdown(
           </span>
           Slap Bug Triage
         </h1>
-        <div class="slap-hero-sub">
-          Drafts a Jira ticket from a bug-report email plus screenshots or videos.
-          Read-only Jira — nothing is auto-filed; a human reviews every draft.
-        </div>
       </div>
     </div>
     """,
@@ -668,13 +674,13 @@ col_rail, col_main = st.columns([1, 3], gap="large")
 
 PIPELINE_RAIL_HTML = """
 <div class="pipeline-rail">
-  <div class="pipeline-rail-title">Multi-agent pipeline</div>
+  <div class="pipeline-rail-title">Pipeline</div>
 
   <div class="pipe-vnode">
     <div class="pipe-vnode-icon endpoint">in</div>
     <div class="pipe-vnode-text">
       <div class="pipe-vnode-name">Input</div>
-      <div class="pipe-vnode-desc">Email + screenshots / videos</div>
+      <div class="pipe-vnode-desc">Email or structured form + optional screenshots / videos.</div>
     </div>
   </div>
 
@@ -690,15 +696,23 @@ PIPELINE_RAIL_HTML = """
     <div class="pipe-vnode-icon">P</div>
     <div class="pipe-vnode-text">
       <div class="pipe-vnode-name">Parser</div>
-      <div class="pipe-vnode-desc">Turns email + media findings into a structured BugReport.</div>
+      <div class="pipe-vnode-desc">Turns text + media findings into a structured BugReport.</div>
     </div>
   </div>
 
   <div class="pipe-vnode">
-    <div class="pipe-vnode-icon">E</div>
+    <div class="pipe-vnode-icon">C</div>
     <div class="pipe-vnode-text">
-      <div class="pipe-vnode-name">Embeddings</div>
-      <div class="pipe-vnode-desc">Ranks the top-5 most similar bugs from 300 historical FLIPPI tickets.</div>
+      <div class="pipe-vnode-name">Classifier</div>
+      <div class="pipe-vnode-desc">LogReg on 564 labelled bugs; falls back to Claude+skills when confidence &lt; 0.50.</div>
+    </div>
+  </div>
+
+  <div class="pipe-vnode">
+    <div class="pipe-vnode-icon">S</div>
+    <div class="pipe-vnode-text">
+      <div class="pipe-vnode-name">Similarity</div>
+      <div class="pipe-vnode-desc">Cosine search ranks the top-5 most similar bugs from historical FLIPPI tickets.</div>
     </div>
   </div>
 
@@ -711,10 +725,18 @@ PIPELINE_RAIL_HTML = """
   </div>
 
   <div class="pipe-vnode">
+    <div class="pipe-vnode-icon">O</div>
+    <div class="pipe-vnode-text">
+      <div class="pipe-vnode-name">Owner</div>
+      <div class="pipe-vnode-desc">Picks an owner from the routed component's team roster, grounded in similar past bugs.</div>
+    </div>
+  </div>
+
+  <div class="pipe-vnode">
     <div class="pipe-vnode-icon">T</div>
     <div class="pipe-vnode-text">
       <div class="pipe-vnode-name">Triage</div>
-      <div class="pipe-vnode-desc">Assigns priority P0-P3 with a plain-English justification.</div>
+      <div class="pipe-vnode-desc">Assigns priority P0 / P1 / P2 with a plain-English justification.</div>
     </div>
   </div>
 
@@ -722,7 +744,7 @@ PIPELINE_RAIL_HTML = """
     <div class="pipe-vnode-icon endpoint output">out</div>
     <div class="pipe-vnode-text">
       <div class="pipe-vnode-name">Output</div>
-      <div class="pipe-vnode-desc">Jira draft + triage_notes JSON.</div>
+      <div class="pipe-vnode-desc">Jira draft + triage_notes JSON. Reviewer approves before filing.</div>
     </div>
   </div>
 </div>
@@ -1123,63 +1145,25 @@ if "triage_result" in st.session_state:
 
         st.stop()
 
-    # Priority-coloured tile grid
+    # ── Editable result tiles ─────────────────────────────────────────────
+    # The result IS the edit form — no separate "view then edit" step. The
+    # widgets carry both the model's prediction (their default value) and
+    # the reviewer's override (their current value). Downloads + the Approve
+    # / Publish flow below pick up whatever's in the widgets at submit time.
     prio = severity.priority if severity.priority in ("P0", "P1", "P2", "P3") else "P2"
-    team_v   = draft.triage_notes.get("team", "—")
-    owner_v  = sim.suggested_owner or "—"
-    dup_v    = sim.duplicate_of or "—"
-    dup_sub  = f"{sim.duplicate_confidence:.0%} confidence" if sim.duplicate_of else "no duplicate found"
-
-    st.markdown(
-        f"""
-        <div class="metric-grid">
-          <div class="mtile prio-{prio}">
-            <div class="mtile-label">Priority</div>
-            <div class="mtile-value">{prio}</div>
-            <div class="mtile-sub">{html.escape(severity.severity)}</div>
-          </div>
-          <div class="mtile">
-            <div class="mtile-label">Team</div>
-            <div class="mtile-value">{html.escape(str(team_v))}</div>
-            <div class="mtile-sub">{html.escape(draft.triage_notes.get('jira_component', '—'))}</div>
-          </div>
-          <div class="mtile">
-            <div class="mtile-label">Owner</div>
-            <div class="mtile-value">{html.escape(str(owner_v))}</div>
-            <div class="mtile-sub">most-similar past bugs</div>
-          </div>
-          <div class="mtile">
-            <div class="mtile-label">Duplicate of</div>
-            <div class="mtile-value">{html.escape(str(dup_v))}</div>
-            <div class="mtile-sub">{html.escape(dup_sub)}</div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    if sim.duplicate_of:
-        st.markdown(f"🔗 Open duplicate: {jira_link(sim.duplicate_of)}")
-
-    # ── Editable overrides ─────────────────────────────────────────────────
-    # The metric tiles above show the model's prediction. The reviewer can
-    # adjust Priority / Component / Owner here before downloading the JSON.
-    # Edits update draft.triage_notes and draft.jira_payload in place so the
-    # downloads at the bottom reflect the corrections.
-
-    st.markdown('<div class="section-label">Edit before filing</div>', unsafe_allow_html=True)
-    st.caption(
-        "Override the model's choices. Downloads below pick up your edits. "
-        "The tiles above always show what the model originally predicted. "
-        "Component overrides are saved to data/corrections.csv as labelled "
-        "training data — the model gets smarter every time you correct it."
-    )
-
     predicted_prio  = prio if prio in PRIORITY_OPTIONS else "P2"
     predicted_comp  = draft.triage_notes.get("jira_component") or "bugs"
     if predicted_comp not in COMPONENT_OPTIONS:
         predicted_comp = "bugs"
     predicted_owner = sim.suggested_owner or ""
+    dup_v   = sim.duplicate_of or "—"
+    dup_sub = f"{sim.duplicate_confidence:.0%} confidence" if sim.duplicate_of else "no duplicate found"
+
+    st.caption(
+        "Pick a different value to override the model. Component overrides are "
+        "saved to data/corrections.csv as labelled training data — the model "
+        "gets smarter every time you correct it."
+    )
 
     # ── Low-confidence ambiguity banner ──────────────────────────────────
     # When LogReg can't commit to a single team (top class probability is
@@ -1233,17 +1217,18 @@ if "triage_result" in st.session_state:
     # Marker div the CSS targets to enlarge the widgets in this section.
     st.markdown('<div class="edit-widgets-section"></div>', unsafe_allow_html=True)
 
-    # Row 1: Priority + Component side by side (short values).
-    ec1, ec2 = st.columns(2)
-    with ec1:
+    # Row 1: Priority + Component (editable) + Duplicate-of (read-only).
+    mc1, mc2, mc3 = st.columns([1, 1.1, 1.3])
+    with mc1:
         edited_prio = st.selectbox(
             "Priority",
             PRIORITY_OPTIONS,
             index=PRIORITY_OPTIONS.index(predicted_prio),
             key="edit_priority",
-            help=f"Model predicted: {predicted_prio}",
+            help=f"Model predicted: {predicted_prio} ({severity.severity})",
         )
-    with ec2:
+        st.caption(f"{SEVERITY_FOR_PRIORITY[edited_prio]}")
+    with mc2:
         edited_comp = st.selectbox(
             "Component",
             COMPONENT_OPTIONS,
@@ -1251,6 +1236,20 @@ if "triage_result" in st.session_state:
             key="edit_component",
             help=f"Model predicted: {predicted_comp}",
         )
+        st.caption(f"Team: {TEAM_FOR_COMPONENT[edited_comp]}")
+    with mc3:
+        st.markdown(
+            f"""
+            <div class="static-tile">
+              <div class="static-tile-label">Duplicate of</div>
+              <div class="static-tile-value">{html.escape(str(dup_v))}</div>
+              <div class="static-tile-sub">{html.escape(dup_sub)}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if sim.duplicate_of:
+            st.markdown(f"🔗 [Open duplicate]({JIRA_BASE_URL}/browse/{sim.duplicate_of})")
 
     # Row 2: Owner full-width (longest values — "Name · Team" can be 40+ chars).
     ec3 = st.container()
