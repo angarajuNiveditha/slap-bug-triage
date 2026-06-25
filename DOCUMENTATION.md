@@ -46,47 +46,60 @@ The repo carries three implementations of the same triage pipeline. They exist f
 
 ## 3. The multi-agent pipeline
 
-The host agent (`src/agents/host_agent.py`, codenamed **Astral**) is a thin coordinator. It calls six sub-agents in sequence; each one is a focused Claude prompt:
+The host agent (`src/agents/host_agent.py`, codenamed **Astral**) is a thin coordinator. The pipeline now mixes Claude calls (for tasks Claude is good at: parsing, dedup judgement, triage reasoning, multimodal media analysis) with light local ML (embedding similarity, LogReg classification) for tasks where Claude was previously doing what a sentence-transformer can do faster and better.
 
 ```
 bug input (email OR structured form + optional images / videos)
     │
     ▼
-[1] subagent_media           — only if attachments present
+[1] subagent_media           — only if attachments present                 [Claude]
     │     ↳ one-line summary folded into the email body
     ▼
-[2] subagent_parser          — email + media findings → BugReport
-    │
+[2] subagent_parser          — email + media findings → BugReport          [Claude]
+    │     (no longer decides component — that's step 3)
     ▼
-[2b] subagent_form_consistency — only if from_form=True
+[2b] subagent_form_consistency — only if from_form=True                    [Claude]
     │                             refile if title/summary/steps don't match
     ▼
-[3] subagent_embeddings      — top-K ranked similar bugs from 300 history
-    │                          + suggested owner
+[3] EmbeddingClassifier      — LogReg over 564-bug embedding index        [local ML]
+    │     ~7ms; if top-class prob < 0.50, falls back to Claude with
+    │     skill files for the top-3 candidate teams                       [Claude+skills]
     ▼
-[4] subagent_dedup           — focused dup/no-dup decision over the top-K
+[4] EmbeddingSimilarityEngine — cosine search returns top-K SimilarBugs   [local ML]
+    │     ~7ms (replaces the old Claude-reads-300-bugs in-context ranking)
+    ▼
+[5] subagent_dedup           — focused dup/no-dup decision over top-K     [Claude]
     │                          (only fires if confidence ≥ 0.80)
     ▼
-[5] subagent_triage          — BugReport + similar bugs → SeverityResult
+[5b] subagent_owner          — focused owner-suggestion call,             [Claude]
+    │                          constrained to the routed component's
+    │                          team roster (no cross-team bleed)
+    ▼
+[6] subagent_triage          — BugReport + similar bugs → SeverityResult  [Claude]
     │                          3-tier ladder: P0 / P1 / P2
     ▼
 agent_ticket_builder         — assembles Jira ADF + triage_notes JSON
     │
     ▼
-human override (UI)          — reviewer edits Priority / Component / Owner;
-                              audit trail in triage_notes.human_overrides
+human override (UI)          — reviewer edits Priority / Component / Owner
+                              + sees full probability distribution when
+                                LogReg confidence < 0.50
+                              + override goes into corrections.csv for
+                                active learning on the next rebuild
 ```
 
-### Sub-agent responsibilities
+### Sub-agent / stage responsibilities
 
-| Sub-agent | File | What it does |
-|---|---|---|
-| **Media** | `subagent_media.py` | Reads attached images / video keyframes. Identifies the SLAP screen using `slap_context/SLAP_KNOWLEDGE.md` and `reference_screens/`. Extracts visible text, UI anomalies, error indicators, and triage signals (likely component, severity hint, *contradicts_email_claim*). Folds a one-line summary into the email body so downstream stages get visual evidence without handling pixels. |
-| **Parser** | `subagent_parser.py` | Turns the email body (now enriched with media findings) into a structured `BugReport` — title, description, steps, expected/actual, impact, platform, reproducibility, reporter, and a `component_hint`. Uses a natural-language ladder for component classification. Explicitly told to prefer `bugs` over a wrong guess. |
-| **Form consistency** | `subagent_form_consistency.py` | Only runs when `from_form=True`. Asks Claude whether the title, summary, and steps describe the same bug. If they don't (e.g. title about caching, summary about search routing, steps about login), returns a quality_issue that surfaces as a refile banner. |
-| **Embeddings** | `subagent_embeddings.py` | Ranks the top-K most similar bugs from 300 historical FLIPPI tickets. Suggests an owner based on the assignee frequency of those top matches. |
-| **Dedup** | `subagent_dedup.py` | Focused dup/no-dup decision over the top-K. Only flags a duplicate when confidence ≥ 0.80. Independent of the ranking step so the threshold can be tuned without touching ranking. |
-| **Triage** | `subagent_triage.py` | Assigns a priority (P0 / P1 / P2) using the priorities of similar past bugs as the primary signal. Falls back to a hard-coded ladder when neighbours disagree. Hard overrides: 100% repro crash → P0, Grayskull / secrets / infra → P0. |
+| Stage | File | Implementation | What it does |
+|---|---|---|---|
+| **Media** | `subagent_media.py` | Claude | Reads attached images / video keyframes. Identifies the SLAP screen using `slap_context/SLAP_KNOWLEDGE.md` and `reference_screens/`. Extracts visible text, UI anomalies, error indicators, and triage signals (likely component, severity hint, *contradicts_email_claim*). |
+| **Parser** | `subagent_parser.py` | Claude | Turns the email body into a structured `BugReport` — title, description, steps, expected/actual, impact, platform, reproducibility, reporter. **No longer outputs `component_hint`** — that's the classifier's job. |
+| **Form consistency** | `subagent_form_consistency.py` | Claude | Only runs when `from_form=True`. Asks Claude whether title/summary/steps describe the same bug. Refile banner if not. |
+| **Component classifier** | `embedding_classifier.py` | LogReg + Claude fallback | Trained on 564 labelled FLIPPI bugs. ~7 ms per prediction. If LogReg's top-class probability ≥ 0.50, returns it directly. Otherwise (35% of bugs), calls Claude with the top-3 candidate teams' skill files + per-repo skills loaded into context — Claude makes an architecture-grounded final call. |
+| **Similarity engine** | `embedding_similarity.py` | Cosine search | Embeds the bug, cosine-searches the same 564-bug index, returns top-K `SimilarBug` objects (key, summary, similarity, assignee, priority, component, url). Replaces what `subagent_embeddings.py` used to do via Claude reading 300 bugs in-context. ~7 ms per query vs. the old ~30–60s. |
+| **Dedup** | `subagent_dedup.py` | Claude | Focused dup/no-dup over top-K. Only flags duplicates ≥ 0.80 confidence. |
+| **Owner suggestion** | `subagent_owner.py` | Claude | Focused Claude call constrained to the routed component's team roster (derived from historical Jira assignees). Filters similar bugs to component-matching ones, picks the owner who has actually worked on this kind of bug. Falls back to frequency-based pick if Claude is unreachable or returns an off-roster name. |
+| **Triage** | `subagent_triage.py` | Claude | Priority (P0 / P1 / P2) using similar bugs' priorities as primary signal. Hard overrides: 100% repro crash → P0; Grayskull/secrets/infra → P0. |
 
 ### How Claude headless mode works
 
@@ -159,48 +172,125 @@ Bugs route to one of six teams. Each team owns a Jira component:
 | DS | `DS` | 14384 | NPS, %Positive, product page analytics, model quality, ranking, result relevance |
 | UI | `UI` | 14383 | React Native, iOS/Android rendering, images, login screen, cold start, styling |
 | Immersive | `immersive` | 14387 | Native AR, VTO SDK, ANRs, drishyamukh-core |
-| bugs | *(no component)* | — | Unclassifiable — needs manual routing |
+| bugs | *(no component)* | — | Low-confidence — needs manual routing |
 
-### Rule-based classifier — `src/agent_parser.py`
+### The current production classifier: embedding + LogReg + Claude+skills fallback
 
-`_extract_component()` runs a **priority-ordered keyword waterfall**:
+The keyword-regex approach reached 78.7% on an early 300-bug sample but collapsed to 27.7% when re-measured against a larger, more recent 564-bug labelled corpus — the keyword list couldn't keep up with FLIPPI's evolving vocabulary. The current classifier replaces regex with a hybrid stack:
 
-1. **immersive** (native AR / VTO SDK / drishyamukh / ANRs in native code)
-2. **UI** (platform prefixes like `[iOS]` / `[Android]` / `[RN]`, visual / layout / spacing / alignment, touch interaction, native build issues, animation, "Show all / View more" UI controls)
-3. **Backend-Labs** (VTON, Styledrops / styledrops with no space, Vibes Player, Cosmos, Moodboard, Liked Drops, reels ingestion)
-4. **DS** (NPS, ranking quality, result relevance — "wrong results", "irrelevant", "less relevant", summary mismatches, model failures to answer, grounding, "showing tables")
-5. **Backend** (chat AI, search, cart, checkout, payment, auth, OTP, sessions, Grayskull, Edison-when-not-in-Labs-context, infra, feed dedup, journey continuation, bot)
-6. **bugs** (fallthrough — return when no team matches confidently)
+```
+1. Embed bug text with sentence-transformers/all-mpnet-base-v2 (~7ms, local CPU, no API key)
+2. LogisticRegression (class_weight='balanced') over the 564 indexed bug embeddings
+3. Read the top class's predicted probability:
+     • probability >= 0.50  → return it (fast path, no Claude call)
+     • probability < 0.50   → call Claude with the top-3 candidate teams'
+                              skill files loaded into the prompt, take Claude's verdict
+     • probability < 0.40 even after Claude → route to "bugs" (manual)
+```
 
-**UI is checked before BE_Labs and DS** because platform-prefixed bugs (`[iOS]`, `[Android]`, `[RN]`) belong to UI even on BE_Labs surfaces (e.g. a Styledrops rendering bug tagged `[iOS]` is UI, not BE_Labs).
+The 564-bug index is built once by `build_embedding_index.py` and cached as:
+- `data/embedding_index.npz` — embeddings + labels + texts + assignees + priorities
+- `data/embedding_index_logreg.pkl` — the trained LogReg model
+- `data/embedding_index_team_roster.json` — derived `team → [engineer, bug_count]` mapping for the owner sub-agent
 
-### Multi-agent classifier — `src/agents/subagent_parser.py`
+Rebuild whenever Jira has new labelled bugs or the corrections.csv (active-learning) file has new overrides.
 
-The parser sub-agent's prompt contains a natural-language version of the same ladder, mirroring the rule-based vocabulary. It includes:
-- Explicit ordering note: UI checked before BE_Labs / DS / Backend, and why
-- Specific vocabulary for each team
-- The explicit instruction: *"Prefer `bugs` over a wrong guess. Manual routing wastes less engineering time than mis-routing."*
+### Measured accuracy on 564-bug leave-one-out
 
-### Accuracy
+| Classifier | LOO accuracy | Latency / bug | Notes |
+|---|---|---|---|
+| Rule-based regex (the old keyword approach, on this corpus) | 27.7% | ~0.06 ms | Falls back to "bugs" on 68% of cases |
+| Pure Claude (focused prompt, no skill files) | 65.1% | ~6.6 s | Measured serially on all 564 bugs |
+| Pure LogReg LOO | 66.8% | ~7 ms | The fast-path baseline |
+| **HYBRID (LogReg + Claude+skills fallback)** | **69.5%** | avg ~2.3 s | **Production behaviour** |
 
-Validated against 300 real FLIPPI bugs on `flipkart.atlassian.net` (rule-based pipeline):
+Two observations on the hybrid number:
 
-| Team | Before this iteration | After this iteration |
-|---|---|---|
-| Backend | 82% | 86% |
-| Backend-Labs | 51% | 81% |
-| DS | 4% | 78% |
-| UI | 7% | 70% |
-| **Overall** | **43%** | **78.7%** |
+- **+2.7 pp over pure LogReg** overall, modest but real on 564 samples
+- **+7.4 pp on the 202 borderline bugs** where LogReg was unsure — this isolates the contribution of the architecture skill files. On the cases that actually need disambiguation, the skills push from 47.5% → 55.0%
 
-The improvement came from three things:
-1. Keyword vocabulary expansion (Styledrops no-space, Vibes / Cosmos / Moodboard, `[iOS]`/`[Android]`/`[RN]` prefixes, visual / interaction / animation terms, DS-specific relevance vocabulary)
-2. Waterfall reorder so UI is checked before BE_Labs / DS / Backend
-3. Removing keywords that were too aggressive and stealing bugs from neighbouring teams
+Per-class F1 on the hybrid:
 
-The remaining 21% mismatch is largely cases where the meaning is clear to a human reader but the exact keywords aren't there — e.g. a UI bug worded entirely in backend vocabulary, or a BE_Labs bug that uses generic phrasing matching Backend's `edison` / `logs` keywords. See *§12 Recommendations* below for paths to push past 78.7%.
+| Class | Support | Precision | Recall | F1 |
+|---|---|---|---|---|
+| UI | 235 | 81.4% | 81.7% | **0.82** |
+| DS | 115 | 61.4% | 88.7% | **0.73** |
+| Backend-Labs | 69 | 62.5% | 72.5% | **0.67** |
+| Backend | 145 | 63.2% | 33.1% | **0.43** ← floor |
 
-The multi-agent classifier has been aligned with the same vocabulary but **has not yet been measured against the same 300-bug corpus**.
+### Why Backend F1 is the floor — the label-noise audit finding
+
+A manual audit (`audit_backend_misclassifications.py`) of 42 of the 85 misclassified Backend bugs found:
+
+| Verdict | Share |
+|---|---|
+| **Mislabelled in Jira** (should be DS / UI / BE_Labs) | **~70%** |
+| Cross-team ambiguous (defensible either way) | ~20% |
+| Genuine model error | ~10% |
+
+The dominant pattern: **Backend → DS leakage**. Chat-AI / model-relevance complaints ("wrong results", "bot didn't understand", "reasons to buy missing", "ranking is off") are systematically being filed against the `Backend` component when they're textbook DS bugs. The classifier correctly identifies them as DS-shaped (top-3 nearest neighbours are all DS bugs at high similarity); we're scoring it against noisy ground truth.
+
+If those ~60 mislabelled bugs were relabelled to DS / UI / BE_Labs, projected accuracy would be **~78–82%** with no model changes. This is the single highest-leverage move available — see §12.
+
+The audit output (gitignored — contains reporter emails / chat URLs) is regenerable from `python3 audit_backend_misclassifications.py`.
+
+### Active learning loop
+
+When a reviewer overrides Component in the Streamlit edit widget, the override is appended to `data/corrections.csv` (gitignored) with the bug text, predicted class, and corrected class. The next index rebuild (`python3 build_embedding_index.py`) folds these synthetic bugs into the training corpus alongside fresh Jira data. The model gets better every time a reviewer corrects it; no Jira edit required.
+
+---
+
+## 6b. Architecture skill files & repo-context system
+
+When LogReg is confident (≥0.50), the classifier doesn't need any architectural context. But for the 35% of bugs that fall to the Claude fallback, Claude reads **architecture skill files** describing what each candidate team owns. This is what turns a "65.1% pure Claude" into a "55.0% Claude+skills on the hard subset" — the skills give Claude concrete code/module references to reason against.
+
+### File layout
+
+```
+slap_context/architecture/
+├── repos.json                 # repo → team → metadata manifest
+├── UI.md                      # team-level skill: what UI owns, common bug patterns
+├── Backend.md                 # team-level: Edison modules, server-side cache, auth
+├── Backend-Labs.md            # team-level: Styledrops, VTON, Vibes, Social Finds
+├── DS.md                      # team-level: ranking, NPS, model quality, content
+├── immersive.md               # team-level: native AR / VTO SDK
+└── repos/                     # gitignored — auto-generated from real code clones
+    ├── edison.md              # 1704 .java files, module map, recent commits
+    ├── dropsense.md           # Java/Pulsar/Aerospike (manifest said "js" — wrong)
+    ├── FaceNet.md             # Python VTON service
+    ├── slap-feed.md           # branch of edison + feed-adk-poc module
+    ├── social-finds-pipeline.md  # branch of edison, social-finds-master-uat
+    ├── slap-auto-qc-pipeline.md  # Python QC pipeline
+    ├── spaghetti.md           # ~100 RN components + ~80 screens (hand-curated)
+    └── mozzarella.md          # 17 Redux slices, routing-signals table (hand-curated)
+```
+
+Per-repo skills are loaded *alongside* the team-level skill when that team is one of the top-3 candidates. A "UI" candidate bug gets the UI team skill + spaghetti + mozzarella skills bundled into Claude's prompt — typically ~25–37 KB of architectural context.
+
+### Repo coverage
+
+- **8 of 11 manifest repos** currently have skill files
+- 6 are auto-generated by `build_repo_skills.py` from local clones
+- 2 are hand-written (spaghetti, mozzarella) — these include a "Common Bug Routing Signals" table mapping symptoms → exact file paths, which is the highest-value content for the classifier
+- 3 are not yet covered: `edison-gateway`, `cp-service-clients`, `expert-opinion-offline-flow`
+
+### Repo cloning (production-prototype mapping)
+
+| Production | Prototype equivalent (`src/repo_context.py`) |
+|---|---|
+| K8s indexer workers | One Python script: `build_repo_skills.py` |
+| Vector One (shared, namespaced) | Local `.npz` + `.md` per repo under `data/repos/` and `slap_context/architecture/repos/` |
+| Cryptex-managed token | `GITHUB_FK_TOKEN` env var |
+| GitHub push webhook → incremental re-index | Manual `python3 build_repo_skills.py` |
+| tree-sitter + LSP | File-tree walk + extension counts + recent commits via `git log` |
+| Per-repo agent + shared index | `RepoContextEngine` per-repo with shared manifest |
+| Live agentic search fallback | `git grep` over the local clone (`repo_context.grep_repo()`) |
+
+`src/repo_context.py` exposes `load_manifest()`, `clone_repo()`, `structural_map()`, `grep_repo()`, and `report_status()`. Run `python3 src/repo_context.py` for a one-shot diagnostic showing token availability + which repos are cloned locally.
+
+### When the manifest lies (and how the skill catches it)
+
+Two manifest entries (`slap-feed`, `social-finds-pipeline`) are labelled as standalone repos but are actually **branches of `Flipkart/edison`** (the URLs are `github.fkinternal.com/Flipkart/edison/tree/slap-feed` and `.../tree/social-finds-master-uat`). The build script clones the right branch and produces skill files that accurately reflect what's there. Similarly, the manifest claimed `dropsense` was JavaScript — auto-generated skill caught that it's Java/Maven (271 .java files, Pulsar + Aerospike infra). Auto-generation > hand-curated manifests for ground-truth fields.
 
 ---
 
@@ -395,25 +485,29 @@ Run with `streamlit run app.py` → `http://localhost:8501`. First load fetches 
 
 ### Known limitations
 
-**Owner suggestion ignores the routed component.** `src/tfidf_similarity.py:121-135` and `src/agents/subagent_embeddings.py:38-73` both pick an owner by assignee frequency across similar bugs, with no filter on whether the assignee is on the routed team. A frequent UI engineer can be suggested for a Backend-routed ticket if a few of the top-K matches happen to be UI bugs. The editable Owner field is the immediate workaround; the proper fix is to filter the similar-bug pool to component-matching bugs before counting assignees.
+**Backend label noise is the headline limitation.** The audit (§6) found that ~70% of misclassified Backend bugs are actually mislabelled in Jira — they should have been DS, UI, or BE_Labs. The model is correctly identifying them as those other classes; we score it against the noisy ground truth. Until those labels are cleaned, measured accuracy understates the model's real performance by an estimated 8-12 percentage points.
 
-**Multi-agent classifier accuracy is not yet measured.** The rule-based classifier was validated at 78.7% on the 300-bug corpus. The multi-agent prompt has been aligned with the same vocabulary and given the "prefer bugs over a wrong guess" instruction, but it hasn't been run against the same 300 bugs to measure whether it closes part of the 21% gap.
+**3 of 11 manifest repos are not yet cloned / skill-mapped.** `edison-gateway`, `cp-service-clients`, `expert-opinion-offline-flow` — the GitHub Enterprise org names for these aren't yet known. The Backend team in particular would benefit from `edison-gateway` (gateway / rate-limiting) and `cp-service-clients` (downstream commerce platform integration) being added.
 
-**Class imbalance in the corpus.** DS has only 27 historical bugs, BE_Labs has 47, while Backend has 113 and UI 104. Any classifier trained from scratch on this corpus will under-represent the smaller classes. k-NN-based approaches (see below) handle imbalance better than from-scratch training.
+**Class imbalance still affects training.** Even with the updated 564-bug corpus, UI has 235 examples while BE_Labs has only 69. `class_weight='balanced'` in LogReg helps but doesn't fully solve it.
+
+**Immersive has zero training examples** in the corpus. The LogReg classifier won't predict Immersive at all. Native AR / VTO SDK bugs route to UI or "bugs" — needs human override.
 
 ### Recommended next iteration (ranked by ROI)
 
-1. **Embedding-based k-NN classifier (highest ROI).** Embed each historical bug with a sentence-transformer or hosted embedding API, label by component, find nearest neighbours for a new bug, majority-vote the component. Uses existing labels directly; gets better automatically as Jira grows; handles class imbalance gracefully. ~$0.0001 per bug if using a hosted embedding API.
+1. **Relabel the ~60 mislabelled Backend bugs (highest ROI).** The audit (`audit_backend_misclassifications.py` → `audit_backend_misclassifications.md`) lists each one with the model's prediction. A reviewer accepting the model's suggestion where clearly correct (DS for relevance bugs, UI for `[iOS]` rendering, BE_Labs for Social Finds) and rebuilding the index would push headline accuracy from 69.5% to ~78-82% with no code changes. Best path: fold reviewer verdicts into `corrections.csv` so the model re-trains automatically on the cleaned labels (no Jira edits required).
 
-2. **Few-shot examples in the multi-agent parser prompt.** Replace the natural-language team descriptions with 5–8 real labeled FLIPPI examples per team, drawn from history. Pure prompt change, ~30 minutes of work, measurable in a day's testing.
+2. **Clone + skill the missing 3 repos.** Token already has the right scope; we just need the GitHub Enterprise org names. Each unlocks one more concrete file of evidence Claude can reason over during borderline classifications. Probably +1-3 pp on Backend recall specifically.
 
-3. **Feedback loop from `human_overrides`.** Persist the audit trail to a CSV / sqlite / Jira label. Periodically re-validate the classifier against accumulated overrides and feed corrections back into the few-shot pool or keyword list. Turns a static 78.7% into a continuously-improving system.
+3. **Add a "Common Bug Routing Signals" table to `spaghetti.md` (similar to mozzarella's).** Mozzarella's symptom-to-file-path mapping is the highest-value content for the Claude fallback — it lets Claude match a bug description directly to a code location. Spaghetti currently has only the inventory.
 
-4. **Expand corpus from 300 → 1000+.** One-line change in `JiraClient.fetch_recent_bugs(limit=...)`. Only valuable **after** an ML method (#1) is in place that can use it. The rule-based engine doesn't benefit from a bigger corpus.
+4. **Audit the `bugs` class.** A non-trivial number of bugs in Jira have no component set. Some of those, when classified by LogReg, could be added back to training data with a confident label. Active learning loop applied to historical unlabelled bugs.
 
-5. **Filter similar-bug pool by routed component before owner suggestion.** Addresses the owner/team mismatch limitation noted above. Small change in `_suggest_owner()` (rule-based) and `subagent_embeddings.py` (multi-agent).
+5. **Track latency variance.** Production Claude calls are 6-10s; cold-start can be longer. Adding a latency histogram in the Streamlit UI would surface degradation early.
 
-The combination of #1 + #3 is the realistic path from 78.7% into the 90s.
+6. **Switch to a hosted embedding (Voyage `voyage-3` or OpenAI `text-embedding-3-small`) if Flipkart network allows.** A stronger embedding would lift recall on every class by 2-4 pp. Currently blocked on the same network restrictions that block `ANTHROPIC_API_KEY`.
+
+The single highest-leverage move is **#1 (relabel Backend)** — it's measurable, well-scoped (a worklist already exists), and converts model "errors" into model wins without writing code.
 
 ---
 
@@ -439,6 +533,12 @@ JIRA_TOKEN=<flipkart atlassian API token>
 JIRA_BASE_URL=https://flipkart.atlassian.net
 JIRA_PROJECT=FLIPPI
 ANTHROPIC_API_KEY=            # only needed for main.py
+
+# GitHub Enterprise (github.fkinternal.com) — read-only token used by
+# src/repo_context.py and build_repo_skills.py to clone SLAP repos for
+# code-aware classification. Needs the `repo` scope to read private repos.
+GITHUB_FK_BASE=https://github.fkinternal.com
+GITHUB_FK_TOKEN=<github enterprise PAT>     # repo + read:org scopes recommended
 
 # Pin the Claude binary so the pipeline survives corp endpoint security
 # deleting brew-installed copies. The path below points at Claude Desktop's
@@ -471,10 +571,17 @@ python3 run_agent.py data/bug_01_p0_checkout_crash.txt
 
 ```
 slap-bug-triage/
-├── app.py                      # Streamlit UI (Email / Form, editable outputs)
+├── app.py                      # Streamlit UI (Email / Form, editable outputs, ambiguity banner)
 ├── run_multi_agent.py          # PRIMARY: multi-agent pipeline (Claude headless)
 ├── run_agent.py                # Rule-based simulation harness
 ├── main.py                     # Anthropic SDK pipeline (blocked)
+│
+├── build_embedding_index.py    # One-time: fetch 564 labelled bugs + embed + train LogReg + roster
+├── build_repo_skills.py        # Generate per-repo skill files from cloned repos
+├── validate_embedding_classifier.py   # LOO accuracy + rule-based comparison
+├── validate_claude_component.py       # Claude-only component-classifier benchmark
+├── validate_hybrid_classifier.py      # **Production accuracy: LogReg + Claude+skills**
+├── audit_backend_misclassifications.py # Worklist generator for Backend label-noise audit
 │
 ├── DOCUMENTATION.md            # THIS FILE — single project guide
 ├── CHANGELOG.md                # Dated record of feature additions
@@ -484,41 +591,59 @@ slap-bug-triage/
 ├── TRIAGE_LOGIC.md             # PM-style report on rule-based logic
 ├── CLAUDE_PIPELINE_REPORT.md   # PM-style report on the Claude pipeline
 │
-├── slap_context/               # SLAP domain knowledge for the media sub-agent
+├── slap_context/               # SLAP domain knowledge
 │   ├── SLAP_KNOWLEDGE.md       # screen catalog, vocabulary, visual triage cues
-│   └── reference_screens/      # labeled Figma exports (gitignored — design IP)
+│   ├── reference_screens/      # labeled Figma exports (gitignored — design IP)
+│   └── architecture/           # Team & repo skill files for the classifier fallback
+│       ├── repos.json          # Repo → team metadata manifest (11 entries)
+│       ├── UI.md               # Hand-curated team skill
+│       ├── Backend.md          # Hand-curated team skill
+│       ├── Backend-Labs.md     # Hand-curated team skill
+│       ├── DS.md               # Hand-curated team skill
+│       ├── immersive.md        # Hand-curated team skill
+│       └── repos/              # Per-repo skills (gitignored — contains real code refs)
+│           ├── edison.md, dropsense.md, FaceNet.md, …  (auto-generated)
+│           └── spaghetti.md, mozzarella.md             (hand-written, with routing tables)
 │
 ├── src/
+│   ├── embedding_classifier.py          # LogReg + Claude+skills fallback
+│   ├── embedding_similarity.py          # Cosine search → SimilarBugs (replaces stage 3)
+│   ├── repo_context.py                  # GitHub Enterprise clone + structural map + grep
+│   │
 │   ├── agents/                          # Multi-agent pipeline
 │   │   ├── host_agent.py                # Astral — coordinates sub-agents
 │   │   ├── subagent_media.py            # images / video → SLAP-aware findings
-│   │   ├── subagent_parser.py           # email + media → BugReport
+│   │   ├── subagent_parser.py           # email + media → BugReport (no component_hint)
 │   │   ├── subagent_form_consistency.py # form-only: title/summary/steps coherence
-│   │   ├── subagent_embeddings.py       # rank top-K similar past bugs
 │   │   ├── subagent_dedup.py            # final duplicate decision (≥ 0.80 conf)
-│   │   └── subagent_triage.py           # priority assignment (3-tier)
+│   │   ├── subagent_owner.py            # NEW — owner suggestion, roster-constrained
+│   │   ├── subagent_triage.py           # priority assignment (3-tier)
+│   │   └── (subagent_embeddings.py)     # deprecated — replaced by embedding_similarity.py
 │   ├── claude_cli.py                    # subprocess wrapper around `claude -p`
 │   │
-│   ├── agent_parser.py                  # Rule-based: regex parser
+│   ├── agent_parser.py                  # Rule-based: regex parser (still used by run_agent.py)
 │   ├── agent_scorer.py                  # Rule-based: multi-layer priority scorer
 │   ├── tfidf_similarity.py              # Rule-based: TF-IDF cosine similarity
 │   │
 │   ├── agent_ticket_builder.py          # Shared: ADF ticket builder
-│   ├── jira_client.py                   # Shared: read-only Jira REST v3 wrapper
+│   ├── jira_client.py                   # Shared: read-only Jira REST v3 wrapper (+ component & training-corpus fetchers)
 │   │
-│   ├── parser.py                        # Anthropic SDK pipeline (blocked)
-│   ├── severity_scorer.py               # Anthropic SDK pipeline (blocked)
-│   ├── similarity.py                    # Anthropic SDK pipeline (blocked)
-│   └── ticket_builder.py                # Anthropic SDK pipeline (blocked)
+│   ├── parser.py / severity_scorer.py / similarity.py / ticket_builder.py
+│   │                                    # Anthropic SDK pipeline (blocked)
 │
-├── data/                                # Input bug-report .txt files
+├── data/                                # Input bug-report .txt files + caches
 │   ├── bug_with_media/                  # multi-modal test bugs (gitignored media)
 │   ├── bug_*.txt                        # text-only test bugs
+│   ├── embedding_index.npz              # GITIGNORED — embeddings + labels + texts + assignees + priorities
+│   ├── embedding_index_logreg.pkl       # GITIGNORED — trained LogReg model
+│   ├── embedding_index_team_roster.json # GITIGNORED — team → engineers (active-learning roster)
+│   ├── corrections.csv                  # GITIGNORED — human overrides feeding back into training
+│   └── repos/                           # GITIGNORED — cloned SLAP repos for skill generation
 │
 ├── tests/                               # Paired tests for mentor review
 ├── output/                              # Rule-based outputs (gitignored)
 ├── output_claude/                       # Multi-agent outputs (gitignored)
-├── .env                                 # Secrets (gitignored)
+├── .env                                 # Secrets (gitignored) — incl. GITHUB_FK_TOKEN
 ├── .env.example                         # Template
 └── requirements.txt
 ```
@@ -596,4 +721,4 @@ Plus the external **Claude Code CLI** (multi-agent pipeline only) — no PyPI de
 
 ---
 
-*Last refreshed 2026-06-24.*
+*Last refreshed 2026-06-25. Phase-2 work: embedding-based classifier (LogReg over sentence-transformer embeddings on 564 labelled FLIPPI bugs); skill-aware Claude fallback for borderline cases; cosine-similarity engine replacing the old in-context Claude similarity stage; team-roster-constrained owner sub-agent; active-learning loop via corrections.csv; backend label-noise audit revealing ~70% of misclassified Backend bugs are mis-labelled in Jira. Production accuracy: 69.5% LOO on the 564-bug corpus; estimated 78–82% with cleaned labels.*
