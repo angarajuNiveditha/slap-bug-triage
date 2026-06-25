@@ -356,37 +356,44 @@ st.markdown(
       }
 
       /* Selectbox value (the displayed selected text): big, bold (mtile-value).
-         Sized so 20px-bold text isn't clipped at top/bottom — needs enough
-         line-height and vertical padding, plus right-padding to leave room
-         for the dropdown chevron icon. */
+         Defensive against baseweb's deeply-nested value containers — every
+         descendant div gets explicit height:auto + overflow:visible so the
+         larger font/line-height doesn't get clipped by an ancestor's fixed
+         height (which is what was happening before). */
+
+      /* Outer combobox container — handles the click region + visible border */
       [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div {
-          font-size: 20px !important;
-          font-weight: 700 !important;
-          color: #18181B !important;
-          line-height: 1.4 !important;
-          letter-spacing: -0.3px !important;
-          min-height: 60px !important;
-          padding: 14px 36px 14px 14px !important;
+          min-height: 56px !important;
+          padding: 12px 38px 12px 14px !important;
           border-radius: 10px !important;
           border: 1px solid transparent !important;
           background: transparent !important;
           box-shadow: none !important;
-          overflow: visible !important;
-      }
-      /* Also target deeper nested value wrappers in the baseweb select tree
-         so the rendered text picks up the larger size + line-height. */
-      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div > div,
-      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] [class*="ValueContainer"],
-      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] [class*="SingleValue"] {
-          font-size: 20px !important;
-          line-height: 1.4 !important;
-          overflow: visible !important;
-          white-space: nowrap !important;
-          text-overflow: ellipsis !important;
       }
       [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div:hover {
           background: #FFFFFF !important;
           border-color: #FBCFE0 !important;
+      }
+
+      /* All non-icon descendants of the select: enforce text rendering rules.
+         line-height 1.6 + height:auto + overflow:visible means the inner
+         value wrappers expand to fit 18px-bold text without clipping.
+         Color is INTENTIONALLY not set here — it inherits from the outer
+         div so the priority colour rules (P0 red, P1 orange, etc.) keep
+         working. */
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] *:not(svg):not(path) {
+          font-size: 18px !important;
+          font-weight: 700 !important;
+          line-height: 1.6 !important;
+          letter-spacing: -0.3px !important;
+          height: auto !important;
+          overflow: visible !important;
+      }
+
+      /* Default value text colour (overridden per-column by the prio-marker
+         rules further down for the Priority column). */
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div {
+          color: #18181B !important;
       }
 
       /* Captions inside tiles look like mtile-sub */
