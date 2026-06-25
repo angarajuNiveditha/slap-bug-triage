@@ -1326,16 +1326,6 @@ if "triage_result" in st.session_state:
     mc1, mc2, mc3, mc4 = st.columns([1, 1.1, 1.7, 1.1])
 
     with mc1:
-        # Markers: the metric-tile-row-marker lets the CSS find the
-        # parent stHorizontalBlock (via :has) and apply the tile-grid
-        # styling; the prio-marker drives priority colour coding on
-        # the column border + value text.
-        current_prio_for_colour = st.session_state.get("edit_priority", predicted_prio)
-        st.markdown(
-            f'<div class="metric-tile-row-marker"></div>'
-            f'<div class="prio-marker prio-{current_prio_for_colour}"></div>',
-            unsafe_allow_html=True,
-        )
         edited_prio = st.selectbox(
             "Priority",
             PRIORITY_OPTIONS,
@@ -1344,6 +1334,19 @@ if "triage_result" in st.session_state:
             help=f"Model predicted: {predicted_prio} ({severity.severity})",
         )
         st.caption(SEVERITY_FOR_PRIORITY[edited_prio])
+
+        # Markers emitted at the BOTTOM of the column (after the visible
+        # widget + caption) so they can't push the label down out of
+        # alignment with the other columns. Even with the collapse CSS,
+        # any residual space the marker wrapper reserves ends up at the
+        # bottom of mc1 instead of the top — labels stay aligned thanks
+        # to `align-items: flex-start` on the horizontal block.
+        current_prio_for_colour = st.session_state.get("edit_priority", predicted_prio)
+        st.markdown(
+            f'<div class="metric-tile-row-marker"></div>'
+            f'<div class="prio-marker prio-{current_prio_for_colour}"></div>',
+            unsafe_allow_html=True,
+        )
 
     with mc2:
         edited_comp = st.selectbox(
