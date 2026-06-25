@@ -329,96 +329,107 @@ st.markdown(
 
       [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) {
           margin: 6px 0 22px 0 !important;
-          padding: 16px 18px !important;
+          padding: 14px 18px 10px !important;
           border-radius: 16px !important;
           background: linear-gradient(135deg, #FFF5F8 0%, #FFFFFF 60%) !important;
           border: 1px solid #FBE0EC !important;
           box-shadow: 0 12px 30px -18px rgba(225,29,116,0.18) !important;
           gap: 14px !important;
+          align-items: flex-start !important;
       }
 
-      /* Each column = one mtile */
+      /* Each column = one mtile — compact padding, pink underline. */
       [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) > [data-testid="stColumn"] {
-          padding: 12px 12px 14px !important;
+          padding: 4px 8px 10px !important;
           border-bottom: 2px solid #FBE0EC !important;
           transition: border-color 0.15s !important;
       }
 
-      /* Selectbox label inside a tile: uppercase, grey, slightly bigger
-         than the original mtile-label so it reads clearly. */
+      /* Tile label — small, uppercase, grey (matches original .mtile-label). */
       [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) [data-testid="stSelectbox"] label,
       [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) [data-testid="stTextInput"] label {
-          font-size: 12px !important;
+          font-size: 10.5px !important;
           font-weight: 700 !important;
           letter-spacing: 1.1px !important;
           text-transform: uppercase !important;
           color: #A8A29E !important;
-          margin-bottom: 8px !important;
+          margin-bottom: 4px !important;
+          padding: 0 !important;
+          line-height: 1 !important;
       }
 
-      /* Selectbox value (the displayed selected text): big, bold (mtile-value).
-         Defensive against baseweb's deeply-nested value containers — every
-         descendant div gets explicit height:auto + overflow:visible so the
-         larger font/line-height doesn't get clipped by an ancestor's fixed
-         height (which is what was happening before). */
-
-      /* Outer combobox container — handles the click region + visible border.
-         min-height bumped to accommodate the larger 20px font without
-         clipping. */
+      /* Outer combobox container — stripped of its default chrome so the
+         widget looks like static text. No border, no background — they
+         only show on hover so the click affordance is still discoverable. */
       [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div {
-          min-height: 64px !important;
-          padding: 14px 38px 14px 14px !important;
-          border-radius: 10px !important;
+          min-height: 44px !important;
+          padding: 2px 24px 2px 0 !important;
           border: 1px solid transparent !important;
           background: transparent !important;
           box-shadow: none !important;
+          border-radius: 6px !important;
+          color: #18181B !important;
       }
       [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div:hover {
-          background: #FFFFFF !important;
+          background: rgba(255,255,255,0.65) !important;
           border-color: #FBCFE0 !important;
       }
 
-      /* All non-icon descendants of the select: enforce text rendering rules.
-         line-height 1.6 + height:auto + overflow:visible means the inner
-         value wrappers expand to fit 20px-bold text without clipping.
-         Color is INTENTIONALLY not set here — it inherits from the outer
-         div so the priority colour rules (P0 red, P1 orange, etc.) keep
-         working. */
+      /* All non-icon descendants of the select: big bold value text, like
+         the original .mtile-value (24px) but defensively expand any
+         baseweb wrapper to avoid clipping. */
       [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] *:not(svg):not(path) {
-          font-size: 20px !important;
+          font-size: 24px !important;
           font-weight: 700 !important;
-          line-height: 1.6 !important;
+          line-height: 1.2 !important;
           letter-spacing: -0.3px !important;
           height: auto !important;
           overflow: visible !important;
       }
 
-      /* Default value text colour (overridden per-column by the prio-marker
-         rules further down for the Priority column). */
-      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div {
-          color: #18181B !important;
+      /* Dropdown chevron — make small and subtle so the cell looks
+         primarily like static text (the original mtile had no chevron). */
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] svg {
+          width: 14px !important;
+          height: 14px !important;
+          opacity: 0.35 !important;
+      }
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div:hover svg {
+          opacity: 0.75 !important;
       }
 
-      /* Captions inside tiles (Severity, Team) — like mtile-sub. */
+      /* Captions (Severity, Team) — small grey, tight to the value above. */
       [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-testid="stCaptionContainer"],
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) [data-testid="stCaptionContainer"] p,
       [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) small {
-          font-size: 13px !important;
+          font-size: 12px !important;
           color: #78716C !important;
-          margin-top: 4px !important;
+          margin-top: 2px !important;
+          margin-bottom: 0 !important;
+          padding: 0 !important;
+          line-height: 1.4 !important;
       }
 
-      /* Hide the marker divs AND the Streamlit stMarkdown wrappers that
-         contain them. Without the wrapper-level hide the markers would
-         still reserve vertical space (Streamlit puts each st.markdown in
-         a stMarkdown container with default margin), pushing the Priority
-         selectbox down so it doesn't baseline-align with the other tiles.
-         :has() still finds the marker for the visible-tile rules because
-         display:none doesn't remove the element from the DOM tree. */
+      /* Collapse every Streamlit wrapper around the structural markers so
+         they reserve zero vertical space (otherwise the Priority cell ends
+         up taller than the others, throwing baseline alignment off).
+         Hide with `height: 0` not `display: none` so :has() in the other
+         CSS rules still sees the markers in the DOM. */
       .metric-tile-row-marker,
       .prio-marker { display: none !important; }
       [data-testid="stMarkdown"]:has(.metric-tile-row-marker),
-      [data-testid="stMarkdown"]:has(.prio-marker) {
-          display: none !important;
+      [data-testid="stMarkdown"]:has(.prio-marker),
+      [data-testid="stElementContainer"]:has(.metric-tile-row-marker),
+      [data-testid="stElementContainer"]:has(.prio-marker),
+      .element-container:has(.metric-tile-row-marker),
+      .element-container:has(.prio-marker) {
+          height: 0 !important;
+          min-height: 0 !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          line-height: 0 !important;
+          font-size: 0 !important;
+          overflow: hidden !important;
       }
 
       /* Priority-colour borders + value text — driven by a per-column
@@ -437,34 +448,35 @@ st.markdown(
       /* Hide the redundant prio-marker div itself */
       .prio-marker { display: none !important; }
 
-      /* Static "Duplicate-of" tile — same big-bold-value look as the
-         editable cells, no widget chrome since it's read-only HTML.
-         Sizes match the editable widget rules above (label 12px,
-         value 20px, sub 13px) for a consistent look across all 4 tiles. */
+      /* Static "Duplicate-of" tile — matches the editable cells' sizing
+         (label 10.5px, value 24px, sub 12px) so the 4 tiles read as a
+         uniform row. */
       .static-tile { padding: 0; }
       .static-tile-label {
-          font-size: 12px !important;
+          font-size: 10.5px !important;
           font-weight: 700 !important;
           letter-spacing: 1.1px !important;
           text-transform: uppercase !important;
           color: #A8A29E !important;
-          margin-bottom: 8px !important;
+          margin-bottom: 4px !important;
+          line-height: 1 !important;
       }
       .static-tile-value {
-          font-size: 20px;
+          font-size: 24px;
           font-weight: 700;
           color: #18181B;
-          line-height: 1.6;
+          line-height: 1.2;
           letter-spacing: -0.3px;
-          padding: 14px 14px;
-          min-height: 64px;
+          padding: 2px 0;
+          min-height: 44px;
           display: flex;
           align-items: center;
       }
       .static-tile-sub {
-          font-size: 13px;
+          font-size: 12px;
           color: #78716C;
-          margin-top: 4px;
+          margin-top: 2px;
+          line-height: 1.4;
       }
 
       /* ── Tabs (underline-on-active, no boxes) ─────────────────────── */
