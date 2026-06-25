@@ -37,7 +37,11 @@ class SimilarBug:
     assignee: Optional[str]
     priority: str
     is_duplicate_candidate: bool
-    url: str = ""  # clickable link to the Jira ticket
+    url: str = ""                            # clickable link to the Jira ticket
+    component: Optional[str] = None          # Jira component (Backend / UI / etc.)
+                                             # populated by the embedding similarity
+                                             # engine so the owner sub-agent can
+                                             # filter to component-matching bugs
 
 
 @dataclass

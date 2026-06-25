@@ -1121,7 +1121,9 @@ if "triage_result" in st.session_state:
     st.markdown('<div class="section-label">Edit before filing</div>', unsafe_allow_html=True)
     st.caption(
         "Override the model's choices. Downloads below pick up your edits. "
-        "The tiles above always show what the model originally predicted."
+        "The tiles above always show what the model originally predicted. "
+        "Component overrides are saved to data/corrections.csv as labelled "
+        "training data — the model gets smarter every time you correct it."
     )
 
     predicted_prio  = prio if prio in PRIORITY_OPTIONS else "P2"
@@ -1129,6 +1131,55 @@ if "triage_result" in st.session_state:
     if predicted_comp not in COMPONENT_OPTIONS:
         predicted_comp = "bugs"
     predicted_owner = sim.suggested_owner or ""
+
+    # ── Low-confidence ambiguity banner ──────────────────────────────────
+    # When LogReg can't commit to a single team (top class probability is
+    # below 0.45) we surface the full probability distribution and tell
+    # the user *why* — better than letting them assume a confident answer.
+    classifier_info = draft.triage_notes.get("classifier") or {}
+    probabilities   = classifier_info.get("probabilities") or {}
+    clf_confidence  = float(classifier_info.get("confidence") or 0.0)
+    # Show the full probability distribution when LogReg couldn't commit
+    # confidently — same threshold the Claude fallback triggers at, so the
+    # user sees the ambiguity whenever the system fell back to Claude.
+    AMBIGUITY_THRESHOLD = 0.50
+
+    if probabilities and clf_confidence < AMBIGUITY_THRESHOLD:
+        sorted_probs = sorted(probabilities.items(), key=lambda kv: -kv[1])
+        bar_html = ""
+        for cls, p in sorted_probs:
+            width = int(p * 100)
+            bar_html += (
+                f'<div style="margin:6px 0;">'
+                f'  <div style="display:flex;justify-content:space-between;font-size:13px;color:#18181B;">'
+                f'    <span style="font-weight:600;">{html.escape(cls)}</span>'
+                f'    <span style="color:#78716C;">{p:.0%}</span>'
+                f'  </div>'
+                f'  <div style="height:10px;background:#FCE7F0;border-radius:6px;overflow:hidden;">'
+                f'    <div style="height:100%;width:{width}%;background:linear-gradient(90deg,#E11D74,#F9A8D4);"></div>'
+                f'  </div>'
+                f'</div>'
+            )
+        st.markdown(
+            f"""
+            <div style="background:#FFF7ED;border:1px solid #FED7AA;border-left:4px solid #EA580C;
+                        border-radius:10px;padding:14px 18px;margin:6px 0 18px 0;">
+              <div style="font-weight:700;color:#9A3412;font-size:14px;margin-bottom:4px;">
+                ⚠ Low-confidence routing — please decide
+              </div>
+              <div style="color:#7C2D12;font-size:13px;margin-bottom:10px;">
+                The classifier couldn't commit to a single team (top class only {clf_confidence:.0%} confident).
+                Probability distribution:
+              </div>
+              {bar_html}
+              <div style="color:#7C2D12;font-size:12px;margin-top:8px;">
+                Your pick below will be saved to <code>data/corrections.csv</code> as a labelled
+                training example for next time.
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     ec1, ec2, ec3 = st.columns(3)
     with ec1:
@@ -1176,6 +1227,47 @@ if "triage_result" in st.session_state:
         if edited_comp in COMPONENT_ID_MAP:
             comp_entry["id"] = COMPONENT_ID_MAP[edited_comp]
         fields["components"] = [comp_entry]
+
+    # ── Active learning: persist component overrides as labelled data ────
+    # Every time the user picks a different component than the model did,
+    # we append the (bug-text, corrected-component) pair to corrections.csv.
+    # On the next index rebuild, those rows fold into the training corpus.
+    # Dedup via session_state so we don't write the same row repeatedly
+    # as the user clicks around — only the latest correction per bug wins.
+    if edited_comp != predicted_comp and edited_comp != "bugs":
+        import hashlib, csv
+        from datetime import datetime
+        bug_text_for_training = f"{bug.title}\n\n{bug.description}\n\n{bug.actual_result}"
+        bug_hash = hashlib.md5(bug_text_for_training.encode("utf-8")).hexdigest()[:12]
+
+        already_saved = st.session_state.setdefault("corrections_written", {})
+        if already_saved.get(bug_hash) != edited_comp:
+            corrections_path = Path(__file__).parent / "data" / "corrections.csv"
+            corrections_path.parent.mkdir(parents=True, exist_ok=True)
+            write_header = not corrections_path.exists()
+            with corrections_path.open("a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                if write_header:
+                    writer.writerow([
+                        "timestamp", "bug_hash", "predicted_component",
+                        "corrected_component", "confidence_at_prediction",
+                        "title", "bug_text",
+                    ])
+                writer.writerow([
+                    datetime.utcnow().isoformat(),
+                    bug_hash,
+                    predicted_comp,
+                    edited_comp,
+                    f"{clf_confidence:.3f}",
+                    bug.title or "",
+                    bug_text_for_training,
+                ])
+            already_saved[bug_hash] = edited_comp
+            st.toast(
+                f"✓ Saved correction to corrections.csv — model will learn "
+                f"{predicted_comp} → {edited_comp} on next rebuild.",
+                icon="🧠",
+            )
 
     # Audit trail — record that a human edited this, so a downstream reader
     # can tell the JSON is a corrected draft, not the raw model output.

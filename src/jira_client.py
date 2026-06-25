@@ -136,6 +136,36 @@ class JiraClient:
         print(f"  [jira] fetched {len(issues)} issues")
         return issues
 
+    def fetch_training_corpus(
+        self,
+        limit: int = 2000,
+        max_age_months: int = 15,
+    ) -> list[dict]:
+        """
+        Fetch a larger corpus of recent FLIPPI bugs, server-side filtered to
+        only those that have a component populated. Used to train the
+        embedding-based component classifier — bugs without a component
+        give us no label to learn from.
+
+        The age filter narrows to recent bugs (default 15 months) because
+        older tickets often reference deprecated screen names / team
+        structures that no longer reflect the product.
+        """
+        jql = (
+            f"project = {self.project} "
+            f"AND issuetype = Bug "
+            f"AND component IS NOT EMPTY "
+            f"AND created >= -{max_age_months * 30}d "
+            f"ORDER BY created DESC"
+        )
+        print(
+            f"  [jira] fetching up to {limit} component-labelled bugs "
+            f"(last {max_age_months} months) for training..."
+        )
+        issues = self.search(jql, max_issues=limit)
+        print(f"  [jira] fetched {len(issues)} labelled training issues")
+        return issues
+
     def text_search_bugs(self, query: str, limit: int = 20) -> list[dict]:
         """
         Full-text search Jira for bugs matching a query string.
@@ -191,6 +221,27 @@ class JiraClient:
         if priority:
             return priority.get("name", "Unknown")
         return "Unknown"
+
+    @staticmethod
+    def extract_component(issue: dict) -> Optional[str]:
+        """
+        Return the first component name attached to the issue, or None.
+
+        Jira allows multiple components per issue. For triage routing we
+        treat the first as canonical — in practice FLIPPI bugs are
+        single-component, so this is rarely ambiguous.
+        """
+        components = (issue.get("fields", {}) or {}).get("components") or []
+        if components and isinstance(components, list):
+            first = components[0]
+            if isinstance(first, dict):
+                return first.get("name")
+        return None
+
+    @staticmethod
+    def extract_created_iso(issue: dict) -> Optional[str]:
+        """Return the issue's `created` field (ISO-8601 string), or None."""
+        return (issue.get("fields", {}) or {}).get("created")
 
 
 # ---------------------------------------------------------------------------
