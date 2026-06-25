@@ -317,17 +317,18 @@ st.markdown(
       }
 
       /* ── Editable result tiles ─────────────────────────────────────
-         Restore the original .metric-grid / .mtile visual: pink-wash
-         outer container, uppercase grey labels, big bold values, the
-         priority-coloured bottom border. The widgets inside the row
-         are Streamlit selectboxes, but styled to LOOK like the old
-         static metric tiles.
+         Restore the original .metric-grid / .mtile visual. The marker
+         is now a SIBLING of the columns row (not inside any column) so
+         it can't disturb column alignment. The CSS reaches the columns
+         row using sibling combinators from the marker's element-container
+         to the next element-container that holds the stHorizontalBlock.
 
-         Scope: the rules below target the stHorizontalBlock that
-         contains a `.metric-tile-row-marker` (emitted inside the
-         first column so :has() can find it from the parent). */
+         Shorthand: `MARK + ROW` below means "the marker's wrapper, then
+         its next sibling wrapper which contains the columns row." */
 
-      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) {
+      /* Outer tile container (the row that follows the marker). */
+      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] > [data-testid="stHorizontalBlock"],
+      .element-container:has(.metric-tile-row-marker) + .element-container [data-testid="stHorizontalBlock"] {
           margin: 6px 0 22px 0 !important;
           padding: 14px 18px 10px !important;
           border-radius: 16px !important;
@@ -335,19 +336,26 @@ st.markdown(
           border: 1px solid #FBE0EC !important;
           box-shadow: 0 12px 30px -18px rgba(225,29,116,0.18) !important;
           gap: 14px !important;
-          align-items: flex-start !important;
+          align-items: stretch !important;
       }
 
-      /* Each column = one mtile — compact padding, pink underline. */
-      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) > [data-testid="stColumn"] {
+      /* Each column = one mtile — same padding everywhere so heights
+         line up and the pink underline at the bottom sits at the same
+         Y for all 4 columns. */
+      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] [data-testid="stColumn"],
+      .element-container:has(.metric-tile-row-marker) + .element-container [data-testid="stColumn"] {
           padding: 4px 8px 10px !important;
           border-bottom: 2px solid #FBE0EC !important;
           transition: border-color 0.15s !important;
+          display: flex !important;
+          flex-direction: column !important;
       }
 
       /* Tile label — small, uppercase, grey (matches original .mtile-label). */
-      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) [data-testid="stSelectbox"] label,
-      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) [data-testid="stTextInput"] label {
+      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] [data-testid="stSelectbox"] label,
+      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] [data-testid="stTextInput"] label,
+      .element-container:has(.metric-tile-row-marker) + .element-container [data-testid="stSelectbox"] label,
+      .element-container:has(.metric-tile-row-marker) + .element-container [data-testid="stTextInput"] label {
           font-size: 10.5px !important;
           font-weight: 700 !important;
           letter-spacing: 1.1px !important;
@@ -358,10 +366,9 @@ st.markdown(
           line-height: 1 !important;
       }
 
-      /* Outer combobox container — stripped of its default chrome so the
-         widget looks like static text. No border, no background — they
-         only show on hover so the click affordance is still discoverable. */
-      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div {
+      /* Selectbox combobox — stripped of its default chrome. */
+      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] div[data-baseweb="select"] > div,
+      .element-container:has(.metric-tile-row-marker) + .element-container div[data-baseweb="select"] > div {
           min-height: 44px !important;
           padding: 2px 24px 2px 0 !important;
           border: 1px solid transparent !important;
@@ -370,15 +377,15 @@ st.markdown(
           border-radius: 6px !important;
           color: #18181B !important;
       }
-      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div:hover {
+      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] div[data-baseweb="select"] > div:hover,
+      .element-container:has(.metric-tile-row-marker) + .element-container div[data-baseweb="select"] > div:hover {
           background: rgba(255,255,255,0.65) !important;
           border-color: #FBCFE0 !important;
       }
 
-      /* All non-icon descendants of the select: big bold value text, like
-         the original .mtile-value (24px) but defensively expand any
-         baseweb wrapper to avoid clipping. */
-      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] *:not(svg):not(path) {
+      /* Value text — big bold, fits 24px without clipping. */
+      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] div[data-baseweb="select"] *:not(svg):not(path),
+      .element-container:has(.metric-tile-row-marker) + .element-container div[data-baseweb="select"] *:not(svg):not(path) {
           font-size: 24px !important;
           font-weight: 700 !important;
           line-height: 1.2 !important;
@@ -387,21 +394,19 @@ st.markdown(
           overflow: visible !important;
       }
 
-      /* Dropdown chevron — make small and subtle so the cell looks
-         primarily like static text (the original mtile had no chevron). */
-      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] svg {
+      /* Subtle chevron. */
+      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] div[data-baseweb="select"] svg,
+      .element-container:has(.metric-tile-row-marker) + .element-container div[data-baseweb="select"] svg {
           width: 14px !important;
           height: 14px !important;
           opacity: 0.35 !important;
       }
-      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div:hover svg {
-          opacity: 0.75 !important;
-      }
 
-      /* Captions (Severity, Team) — small grey, tight to the value above. */
-      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-testid="stCaptionContainer"],
-      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) [data-testid="stCaptionContainer"] p,
-      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) small {
+      /* Captions — tight to the value above, small grey. */
+      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] div[data-testid="stCaptionContainer"],
+      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] [data-testid="stCaptionContainer"] p,
+      .element-container:has(.metric-tile-row-marker) + .element-container div[data-testid="stCaptionContainer"],
+      .element-container:has(.metric-tile-row-marker) + .element-container [data-testid="stCaptionContainer"] p {
           font-size: 12px !important;
           color: #78716C !important;
           margin-top: 2px !important;
@@ -410,19 +415,14 @@ st.markdown(
           line-height: 1.4 !important;
       }
 
-      /* Collapse every Streamlit wrapper around the structural markers so
-         they reserve zero vertical space (otherwise the Priority cell ends
-         up taller than the others, throwing baseline alignment off).
-         Hide with `height: 0` not `display: none` so :has() in the other
-         CSS rules still sees the markers in the DOM. */
-      .metric-tile-row-marker,
-      .prio-marker { display: none !important; }
+      /* Hide every Streamlit wrapper around the single marker so it
+         reserves zero vertical space. The marker stays in the DOM (the
+         `+` sibling combinator above needs the wrapper present), it
+         just renders invisibly. */
+      .metric-tile-row-marker { display: none !important; }
       [data-testid="stMarkdown"]:has(.metric-tile-row-marker),
-      [data-testid="stMarkdown"]:has(.prio-marker),
       [data-testid="stElementContainer"]:has(.metric-tile-row-marker),
-      [data-testid="stElementContainer"]:has(.prio-marker),
-      .element-container:has(.metric-tile-row-marker),
-      .element-container:has(.prio-marker) {
+      .element-container:has(.metric-tile-row-marker) {
           height: 0 !important;
           min-height: 0 !important;
           margin: 0 !important;
@@ -432,21 +432,42 @@ st.markdown(
           overflow: hidden !important;
       }
 
-      /* Priority-colour borders + value text — driven by a per-column
-         marker div .prio-marker.prio-<level> emitted inside the priority
-         column. CSS :has() selects the parent column. */
-      [data-testid="stColumn"]:has(.prio-marker.prio-P0) { border-bottom-color: #FCA5A5 !important; }
-      [data-testid="stColumn"]:has(.prio-marker.prio-P1) { border-bottom-color: #FDBA74 !important; }
-      [data-testid="stColumn"]:has(.prio-marker.prio-P2) { border-bottom-color: #FCD34D !important; }
-      [data-testid="stColumn"]:has(.prio-marker.prio-P3) { border-bottom-color: #93C5FD !important; }
+      /* Priority-colour borders + value text — the single marker now
+         carries a data-prio attribute. CSS finds the FIRST column of the
+         next sibling wrapper and applies the colour. */
+      [data-testid="stElementContainer"]:has(.metric-tile-row-marker[data-prio="P0"]) + [data-testid="stElementContainer"] [data-testid="stColumn"]:first-child,
+      .element-container:has(.metric-tile-row-marker[data-prio="P0"]) + .element-container [data-testid="stColumn"]:first-child {
+          border-bottom-color: #FCA5A5 !important;
+      }
+      [data-testid="stElementContainer"]:has(.metric-tile-row-marker[data-prio="P1"]) + [data-testid="stElementContainer"] [data-testid="stColumn"]:first-child,
+      .element-container:has(.metric-tile-row-marker[data-prio="P1"]) + .element-container [data-testid="stColumn"]:first-child {
+          border-bottom-color: #FDBA74 !important;
+      }
+      [data-testid="stElementContainer"]:has(.metric-tile-row-marker[data-prio="P2"]) + [data-testid="stElementContainer"] [data-testid="stColumn"]:first-child,
+      .element-container:has(.metric-tile-row-marker[data-prio="P2"]) + .element-container [data-testid="stColumn"]:first-child {
+          border-bottom-color: #FCD34D !important;
+      }
+      [data-testid="stElementContainer"]:has(.metric-tile-row-marker[data-prio="P3"]) + [data-testid="stElementContainer"] [data-testid="stColumn"]:first-child,
+      .element-container:has(.metric-tile-row-marker[data-prio="P3"]) + .element-container [data-testid="stColumn"]:first-child {
+          border-bottom-color: #93C5FD !important;
+      }
 
-      [data-testid="stColumn"]:has(.prio-marker.prio-P0) div[data-baseweb="select"] > div { color: #B91C1C !important; }
-      [data-testid="stColumn"]:has(.prio-marker.prio-P1) div[data-baseweb="select"] > div { color: #C2410C !important; }
-      [data-testid="stColumn"]:has(.prio-marker.prio-P2) div[data-baseweb="select"] > div { color: #B45309 !important; }
-      [data-testid="stColumn"]:has(.prio-marker.prio-P3) div[data-baseweb="select"] > div { color: #1D4ED8 !important; }
-
-      /* Hide the redundant prio-marker div itself */
-      .prio-marker { display: none !important; }
+      [data-testid="stElementContainer"]:has(.metric-tile-row-marker[data-prio="P0"]) + [data-testid="stElementContainer"] [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div,
+      .element-container:has(.metric-tile-row-marker[data-prio="P0"]) + .element-container [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div {
+          color: #B91C1C !important;
+      }
+      [data-testid="stElementContainer"]:has(.metric-tile-row-marker[data-prio="P1"]) + [data-testid="stElementContainer"] [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div,
+      .element-container:has(.metric-tile-row-marker[data-prio="P1"]) + .element-container [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div {
+          color: #C2410C !important;
+      }
+      [data-testid="stElementContainer"]:has(.metric-tile-row-marker[data-prio="P2"]) + [data-testid="stElementContainer"] [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div,
+      .element-container:has(.metric-tile-row-marker[data-prio="P2"]) + .element-container [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div {
+          color: #B45309 !important;
+      }
+      [data-testid="stElementContainer"]:has(.metric-tile-row-marker[data-prio="P3"]) + [data-testid="stElementContainer"] [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div,
+      .element-container:has(.metric-tile-row-marker[data-prio="P3"]) + .element-container [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div {
+          color: #1D4ED8 !important;
+      }
 
       /* Static "Duplicate-of" tile — matches the editable cells' sizing
          (label 10.5px, value 24px, sub 12px) so the 4 tiles read as a
@@ -1321,6 +1342,19 @@ if "triage_result" in st.session_state:
             unsafe_allow_html=True,
         )
 
+    # Marker emitted as a SIBLING of the columns row (not inside any
+    # column) so its wrapper's vertical margin can't push any column's
+    # content down out of alignment. The CSS uses sibling combinators
+    # (+ / ~) to find the columns row that follows this marker. The
+    # current priority value is encoded via the data-prio attribute so
+    # one element carries both the row-styling hook and the priority-
+    # colour hook.
+    current_prio_for_colour = st.session_state.get("edit_priority", predicted_prio)
+    st.markdown(
+        f'<div class="metric-tile-row-marker" data-prio="{current_prio_for_colour}"></div>',
+        unsafe_allow_html=True,
+    )
+
     # Single row, 4 tiles — Priority + Component + Owner (editable) +
     # Duplicate-of (read-only). Matches the original .metric-grid layout.
     mc1, mc2, mc3, mc4 = st.columns([1, 1.1, 1.7, 1.1])
@@ -1334,19 +1368,6 @@ if "triage_result" in st.session_state:
             help=f"Model predicted: {predicted_prio} ({severity.severity})",
         )
         st.caption(SEVERITY_FOR_PRIORITY[edited_prio])
-
-        # Markers emitted at the BOTTOM of the column (after the visible
-        # widget + caption) so they can't push the label down out of
-        # alignment with the other columns. Even with the collapse CSS,
-        # any residual space the marker wrapper reserves ends up at the
-        # bottom of mc1 instead of the top — labels stay aligned thanks
-        # to `align-items: flex-start` on the horizontal block.
-        current_prio_for_colour = st.session_state.get("edit_priority", predicted_prio)
-        st.markdown(
-            f'<div class="metric-tile-row-marker"></div>'
-            f'<div class="prio-marker prio-{current_prio_for_colour}"></div>',
-            unsafe_allow_html=True,
-        )
 
     with mc2:
         edited_comp = st.selectbox(
