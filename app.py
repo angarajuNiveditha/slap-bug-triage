@@ -323,10 +323,11 @@ st.markdown(
          are Streamlit selectboxes, but styled to LOOK like the old
          static metric tiles.
 
-         Scope: the rules below target the first stHorizontalBlock
-         immediately after the `.metric-tile-row` marker div. */
+         Scope: the rules below target the stHorizontalBlock that
+         contains a `.metric-tile-row-marker` (emitted inside the
+         first column so :has() can find it from the parent). */
 
-      [data-testid="stMarkdown"]:has(.metric-tile-row) ~ [data-testid="stHorizontalBlock"]:first-of-type {
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) {
           margin: 6px 0 22px 0 !important;
           padding: 16px 18px !important;
           border-radius: 16px !important;
@@ -337,15 +338,15 @@ st.markdown(
       }
 
       /* Each column = one mtile */
-      [data-testid="stMarkdown"]:has(.metric-tile-row) ~ [data-testid="stHorizontalBlock"]:first-of-type > [data-testid="stColumn"] {
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) > [data-testid="stColumn"] {
           padding: 12px 12px 14px !important;
           border-bottom: 2px solid #FBE0EC !important;
           transition: border-color 0.15s !important;
       }
 
       /* Selectbox label inside a tile: uppercase, grey, small (mtile-label) */
-      [data-testid="stMarkdown"]:has(.metric-tile-row) ~ [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stSelectbox"] label,
-      [data-testid="stMarkdown"]:has(.metric-tile-row) ~ [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stTextInput"] label {
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) [data-testid="stSelectbox"] label,
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) [data-testid="stTextInput"] label {
           font-size: 10.5px !important;
           font-weight: 700 !important;
           letter-spacing: 1.1px !important;
@@ -355,7 +356,7 @@ st.markdown(
       }
 
       /* Selectbox value (the displayed selected text): big, bold (mtile-value) */
-      [data-testid="stMarkdown"]:has(.metric-tile-row) ~ [data-testid="stHorizontalBlock"]:first-of-type div[data-baseweb="select"] > div {
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div {
           font-size: 22px !important;
           font-weight: 700 !important;
           color: #18181B !important;
@@ -368,18 +369,21 @@ st.markdown(
           background: transparent !important;
           box-shadow: none !important;
       }
-      [data-testid="stMarkdown"]:has(.metric-tile-row) ~ [data-testid="stHorizontalBlock"]:first-of-type div[data-baseweb="select"] > div:hover {
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div:hover {
           background: #FFFFFF !important;
           border-color: #FBCFE0 !important;
       }
 
       /* Captions inside tiles look like mtile-sub */
-      [data-testid="stMarkdown"]:has(.metric-tile-row) ~ [data-testid="stHorizontalBlock"]:first-of-type div[data-testid="stCaptionContainer"],
-      [data-testid="stMarkdown"]:has(.metric-tile-row) ~ [data-testid="stHorizontalBlock"]:first-of-type small {
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-testid="stCaptionContainer"],
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) small {
           font-size: 11.5px !important;
           color: #78716C !important;
           margin-top: 4px !important;
       }
+
+      /* Hide the marker itself */
+      .metric-tile-row-marker { display: none !important; }
 
       /* Priority-colour borders + value text — driven by a per-column
          marker div .prio-marker.prio-<level> emitted inside the priority
@@ -1267,20 +1271,18 @@ if "triage_result" in st.session_state:
             unsafe_allow_html=True,
         )
 
-    # Marker div the CSS targets to restore the metric-grid tile look.
-    st.markdown('<div class="metric-tile-row"></div>', unsafe_allow_html=True)
-
     # Single row, 4 tiles — Priority + Component + Owner (editable) +
     # Duplicate-of (read-only). Matches the original .metric-grid layout.
     mc1, mc2, mc3, mc4 = st.columns([1, 1.1, 1.7, 1.1])
 
     with mc1:
-        # Priority colour marker — read CURRENT widget value from
-        # session_state so the colour follows the user's selection, not
-        # just the model's prediction. Falls back to predicted_prio on
-        # first render (before session_state is populated).
+        # Markers: the metric-tile-row-marker lets the CSS find the
+        # parent stHorizontalBlock (via :has) and apply the tile-grid
+        # styling; the prio-marker drives priority colour coding on
+        # the column border + value text.
         current_prio_for_colour = st.session_state.get("edit_priority", predicted_prio)
         st.markdown(
+            f'<div class="metric-tile-row-marker"></div>'
             f'<div class="prio-marker prio-{current_prio_for_colour}"></div>',
             unsafe_allow_html=True,
         )
