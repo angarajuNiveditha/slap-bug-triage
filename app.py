@@ -605,41 +605,37 @@ def jira_link(key: Optional[str]) -> str:
 
 
 def render_triage_md(triage: dict) -> str:
-    """Render the triage_notes dict as a clickable-link Markdown document."""
+    """Render the triage_notes dict as a clickable-link Markdown document.
+
+    Slim view: routing fields that are already in the editable Step 2
+    tiles (Team / Component / Duplicate-of / Owner suggestion) are NOT
+    repeated here. This tab focuses on the reasoning behind the model's
+    picks — the triage signals, severity justification, and owner reason —
+    plus the similar-past-bugs table that motivated them.
+    """
     lines: list[str] = []
 
-    team           = triage.get("team", "—")
-    component      = triage.get("jira_component") or "_(none — needs manual routing)_"
-    scoring_path   = (triage.get("priority_scoring_path") or "—").replace("|", "\\|")
-    layer          = scoring_path.split(":")[0]
-    owner          = triage.get("owner_suggestion") or "_(no suggestion)_"
-    owner_reason   = triage.get("owner_reason") or ""
-    dup_key        = triage.get("duplicate_of")
-    dup_conf       = triage.get("duplicate_confidence", 0.0)
-    justification  = triage.get("severity_justification", "")
-    pipeline       = triage.get("pipeline", "—")
+    # Strip the "claude-llm:" / "L1-keyword:" / etc. layer prefix from the
+    # scoring path — the layer info isn't useful to a reviewer; the
+    # signals themselves are. (Reviewers asked for the layer column to
+    # go away.)
+    raw_scoring   = triage.get("priority_scoring_path") or "—"
+    triage_signals = raw_scoring.split(":", 1)[1].strip() if ":" in raw_scoring else raw_scoring
+    triage_signals = triage_signals.replace("|", "\\|")
 
-    dup_cell = (
-        f"[{dup_key}]({JIRA_BASE_URL}/browse/{dup_key}) (confidence {dup_conf:.2f})"
-        if dup_key
-        else f"_(no duplicate)_ — top-match similarity {dup_conf:.2f}"
-    )
+    owner_reason  = triage.get("owner_reason") or "_(no owner reason)_"
+    justification = triage.get("severity_justification") or "_(no justification provided)_"
+    justification_cell = justification.replace("|", "\\|").replace("\n", "<br>")
+    owner_reason_cell  = owner_reason.replace("|", "\\|").replace("\n", "<br>")
 
     lines += [
         "| Field | Value |",
         "|---|---|",
-        f"| **Pipeline** | `{pipeline}` |",
-        f"| **Team** | {team} |",
-        f"| **Jira component** | {component} |",
-        f"| **Scoring layer** | `{layer}` |",
-        f"| **Scoring path** | `{scoring_path}` |",
-        f"| **Duplicate of** | {dup_cell} |",
-        f"| **Owner suggestion** | {owner} |",
-        f"| **Owner reason** | {owner_reason} |",
+        f"| **Triage signals** | `{triage_signals}` |",
+        f"| **Severity justification** | {justification_cell} |",
+        f"| **Owner reason** | {owner_reason_cell} |",
         "",
     ]
-    if justification:
-        lines += ["### Severity Justification", "", f"> {justification}", ""]
 
     qissues = triage.get("quality_issues") or []
     if qissues:
@@ -654,27 +650,6 @@ def render_triage_md(triage: dict) -> str:
                 f"_Suggested action:_ {q.get('suggested_action','')}",
                 "",
             ]
-
-    findings = triage.get("media_findings") or []
-    if findings:
-        lines += ["### Media Findings (from attached images)", ""]
-        for f in findings:
-            screen = f.get("screen", "?")
-            state  = f.get("state", "?")
-            sig    = f.get("triage_signals", {}) or {}
-            lines += [
-                f"**{Path(f.get('image_path','')).name}** — screen: *{screen}*, state: *{state}*",
-                "",
-                f"> {f.get('one_line_summary','')}",
-                "",
-            ]
-            if f.get("ui_anomalies"):
-                lines.append("Anomalies:")
-                for a in f["ui_anomalies"]:
-                    lines.append(f"- {a}")
-                lines.append("")
-            if sig.get("contradicts_email_claim"):
-                lines += [f"⚠ Contradicts email: {sig['contradicts_email_claim']}", ""]
 
     similar = triage.get("similar_bugs") or []
     if similar:
@@ -694,9 +669,6 @@ def render_triage_md(triage: dict) -> str:
             lines.append(f"| [{key}]({url}) | {priority} | {sim:.3f} | {assignee} | {summary} |")
         lines.append("")
 
-    note = triage.get("note")
-    if note:
-        lines += ["---", "", f"_{note}_", ""]
     return "\n".join(lines)
 
 
