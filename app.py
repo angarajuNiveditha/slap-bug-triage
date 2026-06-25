@@ -978,7 +978,8 @@ if triage_btn:
     }
     # Fresh run — drop stale override selections from a previous bug so the
     # new prediction shows as the dropdown's default.
-    for k in ("edit_priority", "edit_component", "edit_owner"):
+    for k in ("edit_priority", "edit_component", "edit_owner",
+              "edit_owner_choice", "edit_owner_jira_query", "edit_owner_jira_pick"):
         st.session_state.pop(k, None)
 
 
@@ -1199,16 +1200,115 @@ if "triage_result" in st.session_state:
             help=f"Model predicted: {predicted_comp}",
         )
     with ec3:
-        edited_owner = st.text_input(
+        # ── Owner picker — Jira-style searchable dropdown ─────────────
+        # Source: the team roster derived from historical Jira assignees
+        # (see EmbeddingClassifier.team_roster). Streamlit's selectbox
+        # supports search-as-you-type out of the box for lists this size,
+        # matching Jira's own assignee picker UX.
+        #
+        # When the reviewer wants someone outside the roster (an engineer
+        # who hasn't been assigned a FLIPPI bug recently), the "Other —
+        # search Jira" option opens a live search against
+        # /rest/api/3/user/assignable/multiProjectSearch — same endpoint
+        # Jira's UI calls.
+
+        OTHER_OPTION = "(Other — search Jira directly)"
+
+        try:
+            host_for_roster = get_engines()[1]
+            team_roster = host_for_roster.classifier.team_roster or {}
+        except Exception:
+            team_roster = {}
+
+        # Build a flat sorted list of unique engineers, with team annotated.
+        engineer_to_team: dict[str, str] = {}
+        for team, members in team_roster.items():
+            for m in members:
+                name = m.get("name")
+                if name and name not in engineer_to_team:
+                    engineer_to_team[name] = team
+
+        # Ensure the model-suggested owner is always selectable even if
+        # somehow not in the roster (defensive).
+        if predicted_owner and predicted_owner not in engineer_to_team:
+            engineer_to_team[predicted_owner] = "?"
+
+        # Sorted by name so the search-as-you-type lands intuitively.
+        owner_options = sorted(engineer_to_team.keys(), key=str.lower)
+
+        # Default to the suggested owner if present, else first entry.
+        if predicted_owner and predicted_owner in owner_options:
+            default_idx = owner_options.index(predicted_owner)
+        else:
+            default_idx = 0 if owner_options else None
+
+        # Append "Other" sentinel at the end.
+        owner_options_with_other = owner_options + [OTHER_OPTION]
+
+        chosen_owner = st.selectbox(
             "Owner",
-            value=predicted_owner,
-            placeholder="(unassigned)",
-            key="edit_owner",
-            help=f"Model suggested: {predicted_owner or '(none)'}",
+            options       = owner_options_with_other,
+            index         = default_idx if default_idx is not None else 0,
+            key           = "edit_owner_choice",
+            help          = (
+                f"Model suggested: {predicted_owner or '(none)'}. "
+                f"Type to search the roster ({len(owner_options)} SLAP engineers). "
+                f"Pick \"Other\" to search all assignable Jira users."
+            ),
+            format_func   = lambda n: (
+                n if n == OTHER_OPTION
+                else f"{n}  ·  {engineer_to_team.get(n, '?')}"
+            ),
         )
 
+        # ── "Other" branch: live Jira search ─────────────────────────
+        if chosen_owner == OTHER_OPTION:
+            jira_query = st.text_input(
+                "Search Jira for an assignable user",
+                placeholder="Type a name or email…",
+                key="edit_owner_jira_query",
+            )
+            edited_owner = None
+            if jira_query and len(jira_query.strip()) >= 2:
+                # Cache the search results in session_state so re-rendering
+                # (when the user picks from the results dropdown) doesn't
+                # re-fire the API call on every keystroke.
+                cache_key = f"jira_user_search_{jira_query.strip().lower()}"
+                if cache_key not in st.session_state:
+                    try:
+                        rb_for_search, _, _ = get_engines()
+                    except Exception:
+                        rb_for_search = None
+                    # JiraClient lives on the host or can be re-instantiated.
+                    from src.jira_client import JiraClient
+                    jc = JiraClient()
+                    st.session_state[cache_key] = jc.search_assignable_users(
+                        jira_query.strip(), limit=15
+                    )
+                results = st.session_state[cache_key]
+
+                if not results:
+                    st.caption(f"No assignable users matched “{jira_query}”.")
+                else:
+                    result_labels = [
+                        f"{r['displayName']}  ·  {r.get('emailAddress') or '(no email)'}"
+                        for r in results
+                    ]
+                    sel = st.selectbox(
+                        "Jira matches",
+                        options = result_labels,
+                        key     = "edit_owner_jira_pick",
+                    )
+                    # Recover the displayName from the label.
+                    chosen_idx = result_labels.index(sel)
+                    edited_owner = results[chosen_idx]["displayName"]
+            else:
+                st.caption("Type at least 2 characters to search Jira.")
+        else:
+            edited_owner = chosen_owner
+
     # ── Patch draft so JSON downloads at the bottom reflect overrides ─────
-    edited_owner_clean = edited_owner.strip() or None
+    edited_owner_clean = (edited_owner.strip() if edited_owner else None) or None
 
     draft.triage_notes["team"]             = TEAM_FOR_COMPONENT[edited_comp]
     draft.triage_notes["jira_component"]   = None if edited_comp == "bugs" else edited_comp

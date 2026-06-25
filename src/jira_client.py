@@ -243,6 +243,52 @@ class JiraClient:
         """Return the issue's `created` field (ISO-8601 string), or None."""
         return (issue.get("fields", {}) or {}).get("created")
 
+    def search_assignable_users(self, query: str, limit: int = 20) -> list[dict]:
+        """
+        Lightweight typeahead search over Jira users who can be assigned
+        to FLIPPI tickets. Matches the exact endpoint Jira's own assignee
+        picker calls.
+
+        Returns up to `limit` user dicts with:
+          - accountId
+          - displayName
+          - emailAddress (if visible)
+          - active (bool)
+
+        Returns [] silently on any error — this is a UI convenience, never
+        the load-bearing source of truth for owner data.
+        """
+        if not query or not query.strip():
+            return []
+        try:
+            url = f"{self.base_url}/rest/api/3/user/assignable/multiProjectSearch"
+            params = {
+                "projectKeys": self.project,
+                "query":       query.strip(),
+                "maxResults":  str(min(limit, 50)),
+            }
+            r = requests.get(
+                url,
+                params  = params,
+                auth    = self.auth,
+                headers = {"Accept": "application/json"},
+                timeout = 10,
+            )
+            if r.status_code != 200:
+                return []
+            return [
+                {
+                    "accountId":    u.get("accountId"),
+                    "displayName":  u.get("displayName"),
+                    "emailAddress": u.get("emailAddress"),
+                    "active":       u.get("active", True),
+                }
+                for u in (r.json() or [])
+                if u.get("displayName")
+            ][:limit]
+        except Exception:
+            return []
+
 
 # ---------------------------------------------------------------------------
 # ADF text extraction helper
