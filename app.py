@@ -840,7 +840,7 @@ PIPELINE_RAIL_HTML = """
     <div class="pipe-vnode-icon endpoint output">out</div>
     <div class="pipe-vnode-text">
       <div class="pipe-vnode-name">Output</div>
-      <div class="pipe-vnode-desc">Jira draft + triage_notes JSON. Reviewer approves before filing.</div>
+      <div class="pipe-vnode-desc">Jira ticket draft ready for review. A human approves before filing.</div>
     </div>
   </div>
 </div>
@@ -1592,11 +1592,15 @@ if "triage_result" in st.session_state:
                     sig = f.triage_signals or {}
                     st.markdown(f"**Screen:** {f.screen}")
                     st.markdown(f"**State:** {f.state}")
-                    if sig:
-                        st.markdown(f"**Likely component:** {sig.get('likely_component', '?')}")
-                        st.markdown(f"**Severity hint:** {sig.get('severity_hint', '?')}")
-                        if sig.get("contradicts_email_claim"):
-                            st.warning(f"Contradicts email: {sig['contradicts_email_claim']}")
+                    # `Likely component` and `Severity hint` were dropped
+                    # — those duplicate what the Step 2 tiles already
+                    # show, and the model decides routing/severity from
+                    # the full bug context, not just from media signals.
+                    # The contradiction warning IS still useful — it's
+                    # what tells the reviewer "the screenshot doesn't
+                    # match what the email said".
+                    if sig and sig.get("contradicts_email_claim"):
+                        st.warning(f"Contradicts email: {sig['contradicts_email_claim']}")
                     if f.kind == "video" and f.action_observed:
                         st.markdown(f"**Action observed:**  \n{f.action_observed}")
                     if f.kind == "video" and f.failure_moment:
@@ -1615,10 +1619,9 @@ if "triage_result" in st.session_state:
                         st.markdown("**Error indicators:**")
                         for e in f.error_indicators:
                             st.markdown(f"- {e}")
-                    if f.visible_text:
-                        with st.expander("Visible text extracted"):
-                            for t in f.visible_text:
-                                st.markdown(f"- {t}")
+                    # `Visible text extracted` expander dropped — the
+                    # one-line summary above is what the model actually
+                    # uses; the raw OCR-style text list was noise.
 
                 # For videos: show the keyframes the sub-agent actually saw,
                 # so the reviewer can audit Claude's frame-by-frame reasoning.
@@ -1634,34 +1637,32 @@ if "triage_result" in st.session_state:
         idx += 1
 
     with tabs[idx]:
-        triage_json = json.dumps(draft.triage_notes, indent=2, ensure_ascii=False)
-        st.code(triage_json, language="json")
+        # Lean download payload — only the fields a human (or an
+        # automation script) actually needs to file the ticket in Jira.
+        # Everything else (similar bugs, classifier provenance, owner
+        # reasoning, audit trail, etc.) lives only in the Findings tab,
+        # not in the downloaded JSON.
+        ticket_draft = {
+            "jira_ticket_draft":   draft.jira_payload,
+            "suggested_assignee":  draft.triage_notes.get("owner_suggestion"),
+        }
+        # Carry forward the human_overrides audit trail when the reviewer
+        # has actually edited something — it tells the filer which fields
+        # were corrected vs. accepted as-is.
+        overrides = draft.triage_notes.get("human_overrides")
+        if overrides:
+            ticket_draft["human_overrides"] = overrides
 
-        full_json = json.dumps(
-            {
-                "pipeline":          draft.triage_notes.get("pipeline", pipeline_label),
-                "jira_ticket_draft": draft.jira_payload,
-                "triage_notes":      draft.triage_notes,
-            },
-            indent=2, ensure_ascii=False,
+        full_json = json.dumps(ticket_draft, indent=2, ensure_ascii=False)
+        st.code(full_json, language="json")
+
+        st.download_button(
+            "⬇ Download ticket draft JSON",
+            data=full_json,
+            file_name=f"ticket_draft_{pipeline_label.replace(' ', '_')}.json",
+            mime="application/json",
+            use_container_width=True,
         )
-        col_dl1, col_dl2 = st.columns(2)
-        with col_dl1:
-            st.download_button(
-                "⬇ Download triage_notes.json",
-                data=triage_json,
-                file_name="triage_notes.json",
-                mime="application/json",
-                use_container_width=True,
-            )
-        with col_dl2:
-            st.download_button(
-                "⬇ Download full ticket draft JSON",
-                data=full_json,
-                file_name=f"ticket_draft_{pipeline_label.replace(' ', '_')}.json",
-                mime="application/json",
-                use_container_width=True,
-            )
 
     # ── Approve & Publish (prototype demo) ─────────────────────────────────
     # Approve gates Publish-to-Jira. Publish itself is intentionally a no-op
