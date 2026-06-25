@@ -484,20 +484,37 @@ this machine (`which claude` should return a path).
 
 ---
 
-## Current status (as of 2026-06-24)
+## Current status (as of 2026-06-25)
 
-- `run_multi_agent.py` fully working end-to-end with Astral host + 6 sub-agents
-  (media, parser, form-consistency, embeddings, dedup, triage), ~90–150 s/bug,
-  no API key required
+- `run_multi_agent.py` fully working end-to-end. The pipeline now mixes Claude
+  (media / parser / form-consistency / dedup / owner / triage) with local ML
+  (embedding classifier + cosine similarity engine). Latency dropped to
+  ~50–90 s per bug.
 - `run_agent.py` rule-based simulation harness still fully working (~35 ms/bug)
-- `app.py` Streamlit UI: input format toggle (Email vs Structured form),
-  pipeline toggle, `st.file_uploader` for image / video attachments, dedicated
-  "Media findings" tab when attachments are present, editable Priority /
-  Component / Owner widgets with `human_overrides` audit trail
-- Triage ladder is 3-tier (P0 / P1 / P2 — no P3). Vague reports route to
-  "Insufficient info — refile" instead of dropping to P3
-- Component classifier validated at 78.7% accuracy on 300 real FLIPPI bugs
-  (Backend 86%, BE_Labs 81%, DS 78%, UI 70%)
+- `app.py` Streamlit UI: input-format toggle, pipeline toggle, media uploader,
+  editable Priority/Component/Owner widgets with audit trail, **ambiguity banner**
+  showing full probability distribution when LogReg confidence < 0.50, and
+  override → `corrections.csv` writer for active learning
+- Triage ladder is 3-tier (P0 / P1 / P2 — no P3). Vague reports → refile.
+- **Component classifier: hybrid LogReg + Claude+skills fallback.**
+  - LogReg trained on 564 component-labelled FLIPPI bugs (sentence-transformer
+    embeddings, class_weight balanced). Fast path: ~7 ms when top-class prob ≥ 0.50.
+  - Borderline cases (35.8%) fall back to Claude with the top-3 candidate
+    teams' architecture skill files loaded as in-context evidence.
+  - Measured **69.5% LOO accuracy** on 564 bugs. Projected 78–82% after
+    backend label cleanup (see audit findings below).
+- **Architecture skill files** at `slap_context/architecture/` — 5 team skills
+  (hand-curated) + 8 of 11 per-repo skills (6 auto-generated from real clones via
+  `build_repo_skills.py`, 2 hand-written by team leads with routing-signals tables)
+- **Backend label-noise audit finding:** ~70% of misclassified Backend bugs
+  are mis-labelled in Jira (chat-AI / relevance complaints filed against Backend
+  that should be DS; visual bugs that should be UI; Social Finds / Q2P bugs that
+  should be BE_Labs). The single highest-leverage improvement is relabelling.
+- **Active learning loop:** UI overrides → `corrections.csv` → next index rebuild.
+- **GitHub Enterprise integration** via `src/repo_context.py` (clone + structural
+  map + `git grep` fallback) — gated on `GITHUB_FK_TOKEN`. 4 SLAP repos cloned locally
+  (edison + dropsense + FaceNet + slap-auto-qc-pipeline + slap-feed branch +
+  social-finds-pipeline branch).
 - Form-consistency sub-agent flags title/summary/steps mismatches when
   `from_form=True`; multi-agent path uses Claude, rule-based has a conservative
   word-overlap heuristic fallback

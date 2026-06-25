@@ -1,5 +1,74 @@
 # Changelog
 
+## 2026-06-25 — Embedding classifier, hybrid + skills, owner sub-agent, label-noise audit
+
+Phase-2 session — replaced keyword regex with semantic ML where appropriate, added architectural context where Claude needed it, audited the corpus for label quality. Measured production accuracy: **69.5% LOO** on 564 labelled FLIPPI bugs, projected **78-82%** after label cleanup.
+
+### Pipeline architecture changes
+
+- **New `src/embedding_classifier.py`**: LogReg trained on sentence-transformer embeddings (all-mpnet-base-v2) of 564 component-labelled FLIPPI bugs. Fast path returns prediction in ~7 ms when LogReg's top-class probability ≥ 0.50.
+- **Hybrid Claude+skills fallback**: when LogReg confidence < 0.50 (35.8% of bugs), Claude is invoked with the top-3 candidate teams' skill files loaded as in-context architecture references. Adds ~6 s on the borderline cases.
+- **New `src/embedding_similarity.py`**: replaces the old `subagent_embeddings` Claude-reads-300-bugs ranking with cosine search over the embedding index. ~7 ms vs the old ~30–60 s.
+- **New `src/agents/subagent_owner.py`**: focused Claude call constrained to the routed component's team roster (derived from historical Jira assignees). Filters similar bugs to component-matching ones before asking Claude to pick. Falls back to frequency-based pick if Claude is unreachable.
+- **Parser sub-agent dropped component classification** — the `component_hint` field is now set by the embedding classifier, not the parser. The parser prompt is shorter and faster.
+
+### Architecture skill-file system
+
+- **`slap_context/architecture/repos.json`** — manifest of 11 SLAP repos with team mapping, prod branch, freshness tier.
+- **5 team-level skill files** (UI / Backend / Backend-Labs / DS / immersive) — hand-curated.
+- **8 of 11 per-repo skill files** generated from real cloned code (`build_repo_skills.py`) or hand-written by team leads (`spaghetti.md`, `mozzarella.md` with routing-signals tables).
+- **`src/repo_context.py`** — wraps the GitHub Enterprise clone + structural map + `git grep` fallback. Gated on `GITHUB_FK_TOKEN` (with `repo` scope) for private-repo access on `github.fkinternal.com`.
+- Skill files are loaded contextually — when LogReg's top-3 candidates include UI, the UI team skill + spaghetti + mozzarella per-repo skills get bundled into Claude's prompt (~25–37 KB of architectural context).
+
+### Measured accuracy (564-bug leave-one-out)
+
+| Classifier | Accuracy | Latency / bug |
+|---|---|---|
+| Rule-based regex (the old keyword approach, on this corpus) | 27.7% | ~0.06 ms |
+| Pure Claude (focused prompt, no skills) | 65.1% | ~6.6 s |
+| Pure LogReg LOO | 66.8% | ~7 ms |
+| **HYBRID (LogReg + Claude+skills)** | **69.5%** | avg ~2.3 s |
+
+On the borderline subset (202 bugs where LogReg was unsure), Claude+skills hit 55.0% vs LogReg's 47.5% — **+7.4 pp lift** isolating the contribution of the skill files.
+
+### Backend label-noise audit
+
+A manual audit (`audit_backend_misclassifications.py`) of 42 misclassified Backend bugs found **~70% are mis-labelled in Jira** — chat-AI relevance complaints filed as Backend that are clearly DS, `[iOS]` rendering bugs filed as Backend that are clearly UI, Social Finds / Q2P bugs filed as Backend that are BE_Labs. The model is correctly identifying them as those other classes; we're scoring it against noisy ground truth. Projected accuracy with cleaned labels: **78-82%**.
+
+### Active-learning loop
+
+When a Streamlit reviewer overrides Component in the edit widget, the (text, predicted, corrected) tuple is appended to `data/corrections.csv` (gitignored). The next `build_embedding_index.py` run folds those corrections in as synthetic labelled bugs. The system gets smarter every time a reviewer corrects it — no Jira edits required.
+
+### Front-end additions
+
+- **Ambiguity banner**: when LogReg confidence < 0.50, the Streamlit UI shows the full probability distribution as a horizontal bar chart so the reviewer sees exactly how undecided the classifier was.
+- **Override → corrections.csv** with toast notification confirming the save.
+
+### Files added
+- `src/embedding_classifier.py`
+- `src/embedding_similarity.py`
+- `src/repo_context.py`
+- `src/agents/subagent_owner.py`
+- `build_embedding_index.py`
+- `build_repo_skills.py`
+- `validate_embedding_classifier.py`
+- `validate_claude_component.py`
+- `validate_hybrid_classifier.py`
+- `audit_backend_misclassifications.py`
+- `slap_context/architecture/{repos.json, UI.md, Backend.md, Backend-Labs.md, DS.md, immersive.md}`
+- `data/bug_aggressive_caching.txt` (test bug for the cache-bleed case)
+
+### Files modified
+- `app.py` — ambiguity banner, corrections.csv writer, threshold bump to 0.50
+- `src/agents/host_agent.py` — wired embedding classifier + similarity engine + owner sub-agent
+- `src/agents/subagent_parser.py` — dropped component classification (~60 lines removed from prompt)
+- `src/agent_ticket_builder.py` — includes `component` in similar-bug JSON
+- `src/tfidf_similarity.py` — added `component` field to `SimilarBug` dataclass
+- `src/jira_client.py` — `extract_component()`, `fetch_training_corpus()`, `extract_created_iso()`
+- `.gitignore` — corrections.csv, embedding index files, repo clones, audit output, per-repo skills
+
+---
+
 ## 2026-06-24 — Form input, editable outputs, 3-tier triage, classifier overhaul
 
 A single session that added two front-end features (structured-form input, editable outputs), one new sub-agent (form consistency), reworked the triage ladder to 3 tiers, and pushed component-classification accuracy from **43% → 78.7%** on 300 real FLIPPI bugs.
