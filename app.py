@@ -316,60 +316,113 @@ st.markdown(
           border-color: #F0EFEB !important;
       }
 
-      /* Larger edit-widgets in the "Edit before filing" section.
-         Targets selectboxes that live inside an .edit-widgets-section
-         marker div emitted right before the editable Priority / Component
-         / Owner widgets. */
-      .edit-widgets-section + div [data-testid="stSelectbox"] label,
-      .edit-widgets-section ~ div [data-testid="stSelectbox"] label,
-      .edit-widgets-section + div [data-testid="stTextInput"] label,
-      .edit-widgets-section ~ div [data-testid="stTextInput"] label {
-          font-size: 15px !important;
-          font-weight: 600 !important;
-          color: #18181B !important;
-      }
-      .edit-widgets-section + div div[data-baseweb="select"] > div,
-      .edit-widgets-section ~ div div[data-baseweb="select"] > div {
-          min-height: 56px !important;
-          padding: 10px 14px !important;
-          font-size: 15.5px !important;
-          border-radius: 14px !important;
-          border-color: #FBCFE0 !important;
-          background: #FFFFFF !important;
-          box-shadow: 0 4px 14px -8px rgba(225,29,116,0.18) !important;
-      }
-      .edit-widgets-section + div div[data-baseweb="select"] > div:hover,
-      .edit-widgets-section ~ div div[data-baseweb="select"] > div:hover {
-          border-color: #E11D74 !important;
-      }
-      .edit-widgets-section + div [data-testid="stTextInput"] input,
-      .edit-widgets-section ~ div [data-testid="stTextInput"] input {
-          min-height: 56px !important;
-          padding: 10px 14px !important;
-          font-size: 15.5px !important;
-          border-radius: 14px !important;
+      /* ── Editable result tiles ─────────────────────────────────────
+         Restore the original .metric-grid / .mtile visual: pink-wash
+         outer container, uppercase grey labels, big bold values, the
+         priority-coloured bottom border. The widgets inside the row
+         are Streamlit selectboxes, but styled to LOOK like the old
+         static metric tiles.
+
+         Scope: the rules below target the first stHorizontalBlock
+         immediately after the `.metric-tile-row` marker div. */
+
+      [data-testid="stMarkdown"]:has(.metric-tile-row) ~ [data-testid="stHorizontalBlock"]:first-of-type {
+          margin: 6px 0 22px 0 !important;
+          padding: 16px 18px !important;
+          border-radius: 16px !important;
+          background: linear-gradient(135deg, #FFF5F8 0%, #FFFFFF 60%) !important;
+          border: 1px solid #FBE0EC !important;
+          box-shadow: 0 12px 30px -18px rgba(225,29,116,0.18) !important;
+          gap: 14px !important;
       }
 
-      /* Static "Duplicate-of" tile — sits in the same row as the editable
-         Priority / Component widgets, so it needs to look like a tile but
-         render plain HTML (it isn't editable). */
-      .static-tile { padding: 4px 0; }
+      /* Each column = one mtile */
+      [data-testid="stMarkdown"]:has(.metric-tile-row) ~ [data-testid="stHorizontalBlock"]:first-of-type > [data-testid="stColumn"] {
+          padding: 12px 12px 14px !important;
+          border-bottom: 2px solid #FBE0EC !important;
+          transition: border-color 0.15s !important;
+      }
+
+      /* Selectbox label inside a tile: uppercase, grey, small (mtile-label) */
+      [data-testid="stMarkdown"]:has(.metric-tile-row) ~ [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stSelectbox"] label,
+      [data-testid="stMarkdown"]:has(.metric-tile-row) ~ [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stTextInput"] label {
+          font-size: 10.5px !important;
+          font-weight: 700 !important;
+          letter-spacing: 1.1px !important;
+          text-transform: uppercase !important;
+          color: #A8A29E !important;
+          margin-bottom: 6px !important;
+      }
+
+      /* Selectbox value (the displayed selected text): big, bold (mtile-value) */
+      [data-testid="stMarkdown"]:has(.metric-tile-row) ~ [data-testid="stHorizontalBlock"]:first-of-type div[data-baseweb="select"] > div {
+          font-size: 22px !important;
+          font-weight: 700 !important;
+          color: #18181B !important;
+          line-height: 1.15 !important;
+          letter-spacing: -0.3px !important;
+          min-height: 46px !important;
+          padding: 6px 12px !important;
+          border-radius: 10px !important;
+          border: 1px solid transparent !important;
+          background: transparent !important;
+          box-shadow: none !important;
+      }
+      [data-testid="stMarkdown"]:has(.metric-tile-row) ~ [data-testid="stHorizontalBlock"]:first-of-type div[data-baseweb="select"] > div:hover {
+          background: #FFFFFF !important;
+          border-color: #FBCFE0 !important;
+      }
+
+      /* Captions inside tiles look like mtile-sub */
+      [data-testid="stMarkdown"]:has(.metric-tile-row) ~ [data-testid="stHorizontalBlock"]:first-of-type div[data-testid="stCaptionContainer"],
+      [data-testid="stMarkdown"]:has(.metric-tile-row) ~ [data-testid="stHorizontalBlock"]:first-of-type small {
+          font-size: 11.5px !important;
+          color: #78716C !important;
+          margin-top: 4px !important;
+      }
+
+      /* Priority-colour borders + value text — driven by a per-column
+         marker div .prio-marker.prio-<level> emitted inside the priority
+         column. CSS :has() selects the parent column. */
+      [data-testid="stColumn"]:has(.prio-marker.prio-P0) { border-bottom-color: #FCA5A5 !important; }
+      [data-testid="stColumn"]:has(.prio-marker.prio-P1) { border-bottom-color: #FDBA74 !important; }
+      [data-testid="stColumn"]:has(.prio-marker.prio-P2) { border-bottom-color: #FCD34D !important; }
+      [data-testid="stColumn"]:has(.prio-marker.prio-P3) { border-bottom-color: #93C5FD !important; }
+
+      [data-testid="stColumn"]:has(.prio-marker.prio-P0) div[data-baseweb="select"] > div { color: #B91C1C !important; }
+      [data-testid="stColumn"]:has(.prio-marker.prio-P1) div[data-baseweb="select"] > div { color: #C2410C !important; }
+      [data-testid="stColumn"]:has(.prio-marker.prio-P2) div[data-baseweb="select"] > div { color: #B45309 !important; }
+      [data-testid="stColumn"]:has(.prio-marker.prio-P3) div[data-baseweb="select"] > div { color: #1D4ED8 !important; }
+
+      /* Hide the redundant prio-marker div itself */
+      .prio-marker { display: none !important; }
+
+      /* Static "Duplicate-of" tile — same big-bold-value look as the
+         editable cells, no widget chrome since it's read-only HTML. */
+      .static-tile { padding: 0; }
       .static-tile-label {
-          font-size: 14px; font-weight: 600; color: #18181B;
-          margin-bottom: 8px; line-height: 1.4;
+          font-size: 10.5px !important;
+          font-weight: 700 !important;
+          letter-spacing: 1.1px !important;
+          text-transform: uppercase !important;
+          color: #A8A29E !important;
+          margin-bottom: 6px !important;
       }
       .static-tile-value {
-          font-size: 22px; font-weight: 700; color: #18181B;
-          line-height: 1.15; letter-spacing: -0.3px;
-          min-height: 56px;
-          display: flex; align-items: center;
-          padding: 10px 14px;
-          border: 1px solid #FBE0EC;
-          border-radius: 14px;
-          background: linear-gradient(135deg, #FFF5F8 0%, #FFFFFF 60%);
+          font-size: 22px;
+          font-weight: 700;
+          color: #18181B;
+          line-height: 1.15;
+          letter-spacing: -0.3px;
+          padding: 6px 0;
+          min-height: 46px;
+          display: flex;
+          align-items: center;
       }
       .static-tile-sub {
-          font-size: 12px; color: #78716C; margin-top: 6px;
+          font-size: 11.5px;
+          color: #78716C;
+          margin-top: 4px;
       }
 
       /* ── Tabs (underline-on-active, no boxes) ─────────────────────── */
@@ -1214,12 +1267,23 @@ if "triage_result" in st.session_state:
             unsafe_allow_html=True,
         )
 
-    # Marker div the CSS targets to enlarge the widgets in this section.
-    st.markdown('<div class="edit-widgets-section"></div>', unsafe_allow_html=True)
+    # Marker div the CSS targets to restore the metric-grid tile look.
+    st.markdown('<div class="metric-tile-row"></div>', unsafe_allow_html=True)
 
-    # Row 1: Priority + Component (editable) + Duplicate-of (read-only).
-    mc1, mc2, mc3 = st.columns([1, 1.1, 1.3])
+    # Single row, 4 tiles — Priority + Component + Owner (editable) +
+    # Duplicate-of (read-only). Matches the original .metric-grid layout.
+    mc1, mc2, mc3, mc4 = st.columns([1, 1.1, 1.7, 1.1])
+
     with mc1:
+        # Priority colour marker — read CURRENT widget value from
+        # session_state so the colour follows the user's selection, not
+        # just the model's prediction. Falls back to predicted_prio on
+        # first render (before session_state is populated).
+        current_prio_for_colour = st.session_state.get("edit_priority", predicted_prio)
+        st.markdown(
+            f'<div class="prio-marker prio-{current_prio_for_colour}"></div>',
+            unsafe_allow_html=True,
+        )
         edited_prio = st.selectbox(
             "Priority",
             PRIORITY_OPTIONS,
@@ -1227,7 +1291,8 @@ if "triage_result" in st.session_state:
             key="edit_priority",
             help=f"Model predicted: {predicted_prio} ({severity.severity})",
         )
-        st.caption(f"{SEVERITY_FOR_PRIORITY[edited_prio]}")
+        st.caption(SEVERITY_FOR_PRIORITY[edited_prio])
+
     with mc2:
         edited_comp = st.selectbox(
             "Component",
@@ -1237,23 +1302,8 @@ if "triage_result" in st.session_state:
             help=f"Model predicted: {predicted_comp}",
         )
         st.caption(f"Team: {TEAM_FOR_COMPONENT[edited_comp]}")
-    with mc3:
-        st.markdown(
-            f"""
-            <div class="static-tile">
-              <div class="static-tile-label">Duplicate of</div>
-              <div class="static-tile-value">{html.escape(str(dup_v))}</div>
-              <div class="static-tile-sub">{html.escape(dup_sub)}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if sim.duplicate_of:
-            st.markdown(f"🔗 [Open duplicate]({JIRA_BASE_URL}/browse/{sim.duplicate_of})")
 
-    # Row 2: Owner full-width (longest values — "Name · Team" can be 40+ chars).
-    ec3 = st.container()
-    with ec3:
+    with mc3:
         # ── Owner picker — Jira-style searchable dropdown ─────────────
         # Source: the team roster derived from historical Jira assignees
         # (see EmbeddingClassifier.team_roster). Streamlit's selectbox
@@ -1369,6 +1419,22 @@ if "triage_result" in st.session_state:
                 st.caption("Type at least 2 characters to search Jira.")
         else:
             edited_owner = chosen_owner
+
+    with mc4:
+        # Duplicate-of — read-only tile (no editable widget, the dedup
+        # decision is the model's, not the reviewer's).
+        st.markdown(
+            f"""
+            <div class="static-tile">
+              <div class="static-tile-label">Duplicate of</div>
+              <div class="static-tile-value">{html.escape(str(dup_v))}</div>
+              <div class="static-tile-sub">{html.escape(dup_sub)}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if sim.duplicate_of:
+            st.markdown(f"🔗 [Open]({JIRA_BASE_URL}/browse/{sim.duplicate_of})")
 
     # ── Patch draft so JSON downloads at the bottom reflect overrides ─────
     edited_owner_clean = (edited_owner.strip() if edited_owner else None) or None
