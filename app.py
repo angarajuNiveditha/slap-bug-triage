@@ -316,187 +316,183 @@ st.markdown(
           border-color: #F0EFEB !important;
       }
 
-      /* ── Editable result tiles ─────────────────────────────────────
-         Restore the original .metric-grid / .mtile visual. The marker
-         is now a SIBLING of the columns row (not inside any column) so
-         it can't disturb column alignment. The CSS reaches the columns
-         row using sibling combinators from the marker's element-container
-         to the next element-container that holds the stHorizontalBlock.
+      /* ── Editable result tiles — bold + colourful ──────────────────
+         The marker sits inside mc1 (first column). CSS uses :has() on
+         the parent stHorizontalBlock — which matched reliably in earlier
+         testing — and on the first column for priority colour coding.
+         The marker wrapper is forced to display:none separately. */
 
-         Shorthand: `MARK + ROW` below means "the marker's wrapper, then
-         its next sibling wrapper which contains the columns row." */
-
-      /* Outer tile container (the row that follows the marker). */
-      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] > [data-testid="stHorizontalBlock"],
-      .element-container:has(.metric-tile-row-marker) + .element-container [data-testid="stHorizontalBlock"] {
-          margin: 6px 0 22px 0 !important;
-          padding: 14px 18px 10px !important;
-          border-radius: 16px !important;
-          background: linear-gradient(135deg, #FFF5F8 0%, #FFFFFF 60%) !important;
-          border: 1px solid #FBE0EC !important;
-          box-shadow: 0 12px 30px -18px rgba(225,29,116,0.18) !important;
-          gap: 14px !important;
+      /* Outer tile container: brighter pink, stronger border, more pop. */
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) {
+          margin: 8px 0 24px 0 !important;
+          padding: 18px 22px 14px !important;
+          border-radius: 18px !important;
+          background: linear-gradient(135deg, #FFE0EE 0%, #FFF5F8 55%, #FFFFFF 100%) !important;
+          border: 1.5px solid #F9A8D4 !important;
+          box-shadow: 0 14px 32px -14px rgba(225,29,116,0.32) !important;
+          gap: 16px !important;
           align-items: stretch !important;
+          position: relative !important;
       }
 
-      /* Each column = one mtile — same padding everywhere so heights
-         line up and the pink underline at the bottom sits at the same
-         Y for all 4 columns. */
-      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] [data-testid="stColumn"],
-      .element-container:has(.metric-tile-row-marker) + .element-container [data-testid="stColumn"] {
-          padding: 4px 8px 10px !important;
-          border-bottom: 2px solid #FBE0EC !important;
+      /* Top accent stripe in pink gradient (purely decorative). */
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker)::before {
+          content: "" !important;
+          position: absolute !important;
+          top: -1px !important;
+          left: 22px !important;
+          width: 64px !important;
+          height: 4px !important;
+          background: linear-gradient(90deg, #E11D74 0%, #F472B6 100%) !important;
+          border-radius: 0 0 6px 6px !important;
+      }
+
+      /* Each column = one tile. Pink underline (gets coloured for the
+         Priority column below). */
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) > [data-testid="stColumn"] {
+          padding: 6px 10px 14px !important;
+          border-bottom: 3px solid #F9A8D4 !important;
           transition: border-color 0.15s !important;
           display: flex !important;
           flex-direction: column !important;
       }
 
-      /* Tile label — small, uppercase, grey (matches original .mtile-label). */
-      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] [data-testid="stSelectbox"] label,
-      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] [data-testid="stTextInput"] label,
-      .element-container:has(.metric-tile-row-marker) + .element-container [data-testid="stSelectbox"] label,
-      .element-container:has(.metric-tile-row-marker) + .element-container [data-testid="stTextInput"] label {
-          font-size: 10.5px !important;
-          font-weight: 700 !important;
-          letter-spacing: 1.1px !important;
+      /* Tile label — pink-tinted, bolder, slightly tighter. */
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) [data-testid="stSelectbox"] label,
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) [data-testid="stTextInput"] label {
+          font-size: 11px !important;
+          font-weight: 800 !important;
+          letter-spacing: 1.3px !important;
           text-transform: uppercase !important;
-          color: #A8A29E !important;
-          margin-bottom: 4px !important;
+          color: #BE185D !important;
+          margin-bottom: 6px !important;
           padding: 0 !important;
           line-height: 1 !important;
       }
 
-      /* Selectbox combobox — stripped of its default chrome. */
-      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] div[data-baseweb="select"] > div,
-      .element-container:has(.metric-tile-row-marker) + .element-container div[data-baseweb="select"] > div {
-          min-height: 44px !important;
-          padding: 2px 24px 2px 0 !important;
+      /* Selectbox combobox — stripped of chrome at rest; pink on hover. */
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div {
+          min-height: 48px !important;
+          padding: 4px 26px 4px 0 !important;
           border: 1px solid transparent !important;
           background: transparent !important;
           box-shadow: none !important;
-          border-radius: 6px !important;
+          border-radius: 8px !important;
           color: #18181B !important;
       }
-      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] div[data-baseweb="select"] > div:hover,
-      .element-container:has(.metric-tile-row-marker) + .element-container div[data-baseweb="select"] > div:hover {
-          background: rgba(255,255,255,0.65) !important;
-          border-color: #FBCFE0 !important;
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div:hover {
+          background: rgba(255,255,255,0.85) !important;
+          border-color: #F472B6 !important;
       }
 
-      /* Value text — big bold, fits 24px without clipping. */
-      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] div[data-baseweb="select"] *:not(svg):not(path),
-      .element-container:has(.metric-tile-row-marker) + .element-container div[data-baseweb="select"] *:not(svg):not(path) {
-          font-size: 24px !important;
-          font-weight: 700 !important;
+      /* Value text — extra-bold, bigger (26px), tight letter spacing. */
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] *:not(svg):not(path) {
+          font-size: 26px !important;
+          font-weight: 800 !important;
           line-height: 1.2 !important;
-          letter-spacing: -0.3px !important;
+          letter-spacing: -0.4px !important;
           height: auto !important;
           overflow: visible !important;
       }
 
-      /* Subtle chevron. */
-      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] div[data-baseweb="select"] svg,
-      .element-container:has(.metric-tile-row-marker) + .element-container div[data-baseweb="select"] svg {
-          width: 14px !important;
-          height: 14px !important;
-          opacity: 0.35 !important;
+      /* Chevron — visible but subtle; pinker on hover for affordance. */
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] svg {
+          width: 16px !important;
+          height: 16px !important;
+          opacity: 0.5 !important;
+          color: #BE185D !important;
+      }
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div:hover svg {
+          opacity: 1 !important;
       }
 
-      /* Captions — tight to the value above, small grey. */
-      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] div[data-testid="stCaptionContainer"],
-      [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .metric-tile-row-marker) + [data-testid="stElementContainer"] [data-testid="stCaptionContainer"] p,
-      .element-container:has(.metric-tile-row-marker) + .element-container div[data-testid="stCaptionContainer"],
-      .element-container:has(.metric-tile-row-marker) + .element-container [data-testid="stCaptionContainer"] p {
-          font-size: 12px !important;
-          color: #78716C !important;
-          margin-top: 2px !important;
+      /* Captions — darker grey, slightly bolder so they read clearly. */
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-testid="stCaptionContainer"],
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) [data-testid="stCaptionContainer"] p,
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) small {
+          font-size: 13px !important;
+          font-weight: 500 !important;
+          color: #6B5470 !important;
+          margin-top: 4px !important;
           margin-bottom: 0 !important;
           padding: 0 !important;
           line-height: 1.4 !important;
       }
 
-      /* Hide every Streamlit wrapper around the single marker so it
-         reserves zero vertical space. The marker stays in the DOM (the
-         `+` sibling combinator above needs the wrapper present), it
-         just renders invisibly. */
+      /* Hide every Streamlit wrapper around the marker so it reserves
+         zero vertical space — that's how the Priority cell aligns with
+         the others. Display:none doesn't remove from the DOM, so the
+         :has() rules above (which key off the marker) still match. */
       .metric-tile-row-marker { display: none !important; }
       [data-testid="stMarkdown"]:has(.metric-tile-row-marker),
       [data-testid="stElementContainer"]:has(.metric-tile-row-marker),
       .element-container:has(.metric-tile-row-marker) {
-          height: 0 !important;
-          min-height: 0 !important;
-          margin: 0 !important;
-          padding: 0 !important;
-          line-height: 0 !important;
-          font-size: 0 !important;
-          overflow: hidden !important;
+          display: none !important;
       }
 
-      /* Priority-colour borders + value text — the single marker now
-         carries a data-prio attribute. CSS finds the FIRST column of the
-         next sibling wrapper and applies the colour. */
-      [data-testid="stElementContainer"]:has(.metric-tile-row-marker[data-prio="P0"]) + [data-testid="stElementContainer"] [data-testid="stColumn"]:first-child,
-      .element-container:has(.metric-tile-row-marker[data-prio="P0"]) + .element-container [data-testid="stColumn"]:first-child {
-          border-bottom-color: #FCA5A5 !important;
+      /* Priority-colour underline + value text — keyed off data-prio
+         attribute on the marker. The :first-child column inside the
+         horizontal block is the Priority cell. Deeper, more saturated
+         shades for the "bolder/colourful" look. */
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker[data-prio="P0"]) > [data-testid="stColumn"]:first-child {
+          border-bottom-color: #DC2626 !important;
       }
-      [data-testid="stElementContainer"]:has(.metric-tile-row-marker[data-prio="P1"]) + [data-testid="stElementContainer"] [data-testid="stColumn"]:first-child,
-      .element-container:has(.metric-tile-row-marker[data-prio="P1"]) + .element-container [data-testid="stColumn"]:first-child {
-          border-bottom-color: #FDBA74 !important;
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker[data-prio="P1"]) > [data-testid="stColumn"]:first-child {
+          border-bottom-color: #EA580C !important;
       }
-      [data-testid="stElementContainer"]:has(.metric-tile-row-marker[data-prio="P2"]) + [data-testid="stElementContainer"] [data-testid="stColumn"]:first-child,
-      .element-container:has(.metric-tile-row-marker[data-prio="P2"]) + .element-container [data-testid="stColumn"]:first-child {
-          border-bottom-color: #FCD34D !important;
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker[data-prio="P2"]) > [data-testid="stColumn"]:first-child {
+          border-bottom-color: #D97706 !important;
       }
-      [data-testid="stElementContainer"]:has(.metric-tile-row-marker[data-prio="P3"]) + [data-testid="stElementContainer"] [data-testid="stColumn"]:first-child,
-      .element-container:has(.metric-tile-row-marker[data-prio="P3"]) + .element-container [data-testid="stColumn"]:first-child {
-          border-bottom-color: #93C5FD !important;
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker[data-prio="P3"]) > [data-testid="stColumn"]:first-child {
+          border-bottom-color: #2563EB !important;
       }
 
-      [data-testid="stElementContainer"]:has(.metric-tile-row-marker[data-prio="P0"]) + [data-testid="stElementContainer"] [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div,
-      .element-container:has(.metric-tile-row-marker[data-prio="P0"]) + .element-container [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div {
-          color: #B91C1C !important;
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker[data-prio="P0"]) > [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div,
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker[data-prio="P0"]) > [data-testid="stColumn"]:first-child div[data-baseweb="select"] *:not(svg):not(path) {
+          color: #DC2626 !important;
       }
-      [data-testid="stElementContainer"]:has(.metric-tile-row-marker[data-prio="P1"]) + [data-testid="stElementContainer"] [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div,
-      .element-container:has(.metric-tile-row-marker[data-prio="P1"]) + .element-container [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div {
-          color: #C2410C !important;
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker[data-prio="P1"]) > [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div,
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker[data-prio="P1"]) > [data-testid="stColumn"]:first-child div[data-baseweb="select"] *:not(svg):not(path) {
+          color: #EA580C !important;
       }
-      [data-testid="stElementContainer"]:has(.metric-tile-row-marker[data-prio="P2"]) + [data-testid="stElementContainer"] [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div,
-      .element-container:has(.metric-tile-row-marker[data-prio="P2"]) + .element-container [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div {
-          color: #B45309 !important;
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker[data-prio="P2"]) > [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div,
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker[data-prio="P2"]) > [data-testid="stColumn"]:first-child div[data-baseweb="select"] *:not(svg):not(path) {
+          color: #D97706 !important;
       }
-      [data-testid="stElementContainer"]:has(.metric-tile-row-marker[data-prio="P3"]) + [data-testid="stElementContainer"] [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div,
-      .element-container:has(.metric-tile-row-marker[data-prio="P3"]) + .element-container [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div {
-          color: #1D4ED8 !important;
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker[data-prio="P3"]) > [data-testid="stColumn"]:first-child div[data-baseweb="select"] > div,
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker[data-prio="P3"]) > [data-testid="stColumn"]:first-child div[data-baseweb="select"] *:not(svg):not(path) {
+          color: #2563EB !important;
       }
 
-      /* Static "Duplicate-of" tile — matches the editable cells' sizing
-         (label 10.5px, value 24px, sub 12px) so the 4 tiles read as a
-         uniform row. */
+      /* Static "Duplicate-of" tile — matches the editable cells'
+         updated sizing (label 11px pink, value 26px extra-bold,
+         sub 13px) so the 4 tiles read as a uniform bold row. */
       .static-tile { padding: 0; }
       .static-tile-label {
-          font-size: 10.5px !important;
-          font-weight: 700 !important;
-          letter-spacing: 1.1px !important;
+          font-size: 11px !important;
+          font-weight: 800 !important;
+          letter-spacing: 1.3px !important;
           text-transform: uppercase !important;
-          color: #A8A29E !important;
-          margin-bottom: 4px !important;
+          color: #BE185D !important;
+          margin-bottom: 6px !important;
           line-height: 1 !important;
       }
       .static-tile-value {
-          font-size: 24px;
-          font-weight: 700;
+          font-size: 26px;
+          font-weight: 800;
           color: #18181B;
           line-height: 1.2;
-          letter-spacing: -0.3px;
-          padding: 2px 0;
-          min-height: 44px;
+          letter-spacing: -0.4px;
+          padding: 4px 0;
+          min-height: 48px;
           display: flex;
           align-items: center;
       }
       .static-tile-sub {
-          font-size: 12px;
-          color: #78716C;
-          margin-top: 2px;
+          font-size: 13px;
+          font-weight: 500;
+          color: #6B5470;
+          margin-top: 4px;
           line-height: 1.4;
       }
 
@@ -1342,24 +1338,20 @@ if "triage_result" in st.session_state:
             unsafe_allow_html=True,
         )
 
-    # Marker emitted as a SIBLING of the columns row (not inside any
-    # column) so its wrapper's vertical margin can't push any column's
-    # content down out of alignment. The CSS uses sibling combinators
-    # (+ / ~) to find the columns row that follows this marker. The
-    # current priority value is encoded via the data-prio attribute so
-    # one element carries both the row-styling hook and the priority-
-    # colour hook.
-    current_prio_for_colour = st.session_state.get("edit_priority", predicted_prio)
-    st.markdown(
-        f'<div class="metric-tile-row-marker" data-prio="{current_prio_for_colour}"></div>',
-        unsafe_allow_html=True,
-    )
-
     # Single row, 4 tiles — Priority + Component + Owner (editable) +
     # Duplicate-of (read-only). Matches the original .metric-grid layout.
     mc1, mc2, mc3, mc4 = st.columns([1, 1.1, 1.7, 1.1])
 
     with mc1:
+        # Marker INSIDE mc1 so the :has() selectors on the parent
+        # stHorizontalBlock (and on this column) match reliably across
+        # Streamlit versions. The wrapper is hidden via display:none
+        # which doesn't affect :has() matching (DOM-presence based).
+        current_prio_for_colour = st.session_state.get("edit_priority", predicted_prio)
+        st.markdown(
+            f'<div class="metric-tile-row-marker" data-prio="{current_prio_for_colour}"></div>',
+            unsafe_allow_html=True,
+        )
         edited_prio = st.selectbox(
             "Priority",
             PRIORITY_OPTIONS,
