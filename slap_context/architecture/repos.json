@@ -1,0 +1,111 @@
+{
+  "_comment": "Repo → team map for the SLAP codebase. Seeded from the prod repo list in the architecture spec. The team field drives skill-file selection during low-confidence classification: classifier loads the skill files for the candidate teams' repos when LogReg is borderline. Add new repos here without code changes elsewhere — the loader keys off this file.",
+  "_source": "github.fkinternal.com (Flipkart internal GitHub Enterprise)",
+  "_token_env": "GITHUB_FK_TOKEN",
+  "_last_updated": "2026-06-24",
+  "repos": [
+    {
+      "name":         "spaghetti",
+      "team":         "UI",
+      "stack":        "react-native",
+      "prod_branch":  "develop",
+      "freshness":    "warm",
+      "purpose":      "Primary SLAP mobile app (React Native). Hosts most user-facing screens, navigation, and client-side state.",
+      "owns_features": ["onboarding", "homepage", "navigation", "shared UI components", "auth screens", "profile UI"]
+    },
+    {
+      "name":         "mozzarella",
+      "team":         "UI",
+      "stack":        "react-native",
+      "prod_branch":  "develop",
+      "freshness":    "warm",
+      "purpose":      "Secondary RN bundle / shared component library for SLAP. Houses lower-level components, design system, and animations.",
+      "owns_features": ["design system", "shared components", "animations", "RN bridge utilities"]
+    },
+    {
+      "name":         "dropsense",
+      "team":         "Backend-Labs",
+      "stack":        "js",
+      "prod_branch":  "main",
+      "freshness":    "lazy",
+      "purpose":      "FTUE (first-time user experience) and Styledrops feature service. Generates Style Drops, handles drop liking and the FTUE journey.",
+      "owns_features": ["Style Drops", "Styledrops", "FTUE", "drop generation", "liked drops"]
+    },
+    {
+      "name":         "slap-feed",
+      "team":         "Backend-Labs",
+      "stack":        "java",
+      "prod_branch":  "slap-feed",
+      "_is_branch_of": "Flipkart/edison",
+      "_note":         "Not a standalone repo. Lives as a feature branch of Flipkart/edison (last touched 2026-03-26 by Saumya Chauhan). Active feed work happens on sibling slap-feeds/* branches and inside edison's productions tree (style-drop/, social-finds/). Cloned at data/repos/slap-feed/ from edison@slap-feed.",
+      "freshness":    "warm",
+      "purpose":      "Feed + card generation work for SLAP. Branched off edison's mainline; includes a feed-adk-poc/ directory plus the standard edison modules.",
+      "owns_features": ["feed cards", "card generation", "Vibes Player feed", "feed personalisation"]
+    },
+    {
+      "name":         "social-finds-pipeline",
+      "team":         "Backend-Labs",
+      "stack":        "java",
+      "prod_branch":  "social-finds-master-uat",
+      "_is_branch_of": "Flipkart/edison",
+      "_note":         "Not a standalone repo. Lives as a feature branch of Flipkart/edison. Cloned at data/repos/social-finds-pipeline/ from edison@social-finds-master-uat. Active Social Finds backend code also lives within edison's productions tree (social-finds/ module).",
+      "freshness":    "warm",
+      "purpose":      "Social Finds ingestion + processing. Branched off edison's mainline; includes the social-finds/ module plus uat-track variations.",
+      "owns_features": ["Social Finds", "reels ingestion", "social content discovery"]
+    },
+    {
+      "name":         "expert-opinion-offline-flow",
+      "team":         "DS",
+      "stack":        "python",
+      "prod_branch":  "develop",
+      "freshness":    "lazy",
+      "purpose":      "Offline ranking / model-quality pipeline for product recommendation. Computes scoring features used by the chat AI ranker.",
+      "owns_features": ["offline ranking", "ranking quality", "recommendation scoring", "expert-opinion model"]
+    },
+    {
+      "name":         "edison",
+      "team":         "Backend",
+      "stack":        "java",
+      "prod_branch":  "productions",
+      "freshness":    "warm",
+      "purpose":      "Core SLAP backend service. Owns chat AI, search, cart, checkout, payment, auth, session management, conversation handling, journey continuation, secrets (Grayskull).",
+      "owns_features": ["chat AI", "search", "cart", "checkout", "payment", "auth", "OTP", "sessions", "Grayskull", "secrets", "Edison", "journey continuation", "conversation handling", "log levels", "product compare"]
+    },
+    {
+      "name":         "edison-gateway",
+      "team":         "Backend",
+      "stack":        "java",
+      "prod_branch":  "main",
+      "freshness":    "lazy",
+      "purpose":      "Gateway / edge service in front of Edison. Handles routing, rate limiting, request shaping. Touches auth headers and session cookies.",
+      "owns_features": ["API gateway", "routing", "rate limiting", "edge auth"]
+    },
+    {
+      "name":         "slap-auto-qc-pipeline",
+      "team":         "DS",
+      "stack":        "python",
+      "prod_branch":  "main",
+      "freshness":    "lazy",
+      "purpose":      "Automated quality-control pipeline for SLAP response quality. Computes NPS-adjacent metrics, content quality scores, model failure rates.",
+      "owns_features": ["NPS", "%Positive", "auto-QC", "model quality monitoring", "response quality metrics"]
+    },
+    {
+      "name":         "cp-service-clients",
+      "team":         "Backend",
+      "stack":        "java",
+      "prod_branch":  "master",
+      "freshness":    "lazy",
+      "purpose":      "Java client libraries Edison and edison-gateway use to call downstream Flipkart commerce-platform (CP) services.",
+      "owns_features": ["downstream CP integration", "service-client libraries", "commerce-platform calls"]
+    },
+    {
+      "name":         "FaceNet",
+      "team":         "Backend-Labs",
+      "stack":        "python",
+      "prod_branch":  "master",
+      "freshness":    "lazy",
+      "purpose":      "VTON / virtual try-on model service. Owns face detection, persona matching, virtual-try-on inference.",
+      "owns_features": ["VTON", "virtual try-on", "draping", "face detection", "persona match", "Machine Identity"]
+    }
+  ]
+}

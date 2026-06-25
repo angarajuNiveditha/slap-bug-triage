@@ -96,6 +96,7 @@ def build_ticket(
                 "similarity": m.similarity,
                 "assignee":   m.assignee,
                 "priority":   m.priority,
+                "component":  m.component,
             }
             for m in similarity.top_matches
         ],

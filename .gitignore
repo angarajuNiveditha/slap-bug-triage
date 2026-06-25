@@ -5,6 +5,26 @@
 output/
 output_claude/
 
+# Active-learning corrections — contains real bug text from reviewer
+# overrides. Treat as local-only training data.
+data/corrections.csv
+
+# Cached embedding index (rebuilt by build_embedding_index.py)
+data/embedding_index.npz
+data/embedding_index_logreg.pkl
+data/embedding_index_team_roster.json
+
+# Cloned SLAP code repos (contain proprietary code — never commit)
+data/repos/
+
+# Auto-generated per-repo skill files (built from the clones above —
+# they include README excerpts and commit metadata. Treat as local-only.)
+slap_context/architecture/repos/
+
+# Backend label-noise audit output — contains real bug titles, reporter
+# emails, and Google Chat links. Treat as local-only.
+audit_backend_misclassifications.md
+
 # Python artifacts
 __pycache__/
 *.pyc

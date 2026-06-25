@@ -1,0 +1,17 @@
+From: priya.sharma@flipkart.com
+Subject: Very aggressive caching - InfoSec concern
+
+Bug: Very aggressive caching: I logged out from one account and logged in to another, but the same address of the first account was shown. This may not pass info sec requirements.
+
+Summary:
+I logged out from one account and logged in to another, but the same address of the first account was shown.
+
+Steps to reproduce:
+1. Login to SLAP app
+2. Go Slap homepage
+3. perform any action
+4. Logout from slap
+5. And login slap with different number and verify
+
+Platform: Android
+Reproducibility: 100%

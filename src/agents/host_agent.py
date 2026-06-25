@@ -42,10 +42,13 @@ from ..agent_scorer         import SeverityResult
 from ..agent_ticket_builder import TicketDraft, build_ticket
 from ..tfidf_similarity     import SimilarBug, SimilarityResult
 
+from ..embedding_classifier import EmbeddingClassifier
+from ..embedding_similarity import EmbeddingSimilarityEngine
+
 from .subagent_dedup            import DedupResult, decide_duplicate
-from .subagent_embeddings       import EmbeddingsEngine, EmbeddingsResult
 from .subagent_form_consistency import check_form_consistency
 from .subagent_media            import MediaResult, process_attachments
+from .subagent_owner            import suggest_owner
 from .subagent_parser           import parse_bug_report
 from .subagent_triage           import score_severity
 
@@ -53,10 +56,9 @@ from .subagent_triage           import score_severity
 @dataclass
 class HostResult:
     bug:        BugReport
-    media:     MediaResult
-    embeddings: EmbeddingsResult
+    media:      MediaResult
     dedup:      DedupResult
-    similarity: SimilarityResult     # assembled (embeddings + dedup) for ticket builder
+    similarity: SimilarityResult     # assembled (embeddings + dedup + owner) for ticket builder
     severity:   SeverityResult
     draft:      TicketDraft
 
@@ -192,16 +194,26 @@ def detect_quality_issues(
 
 class HostAgent:
     """
-    Stateful host. Build the embeddings index once with .build_index(...) then
-    call .triage(...) per bug. Reuses the cached Jira corpus across calls.
+    Stateful host coordinating the multi-agent pipeline.
+
+    Loads the cached embedding index (and trained LogReg model + team
+    roster) once at construction. The .triage() call then reuses the
+    in-memory index across many bugs.
+
+    build_index() is kept for API compatibility with callers that used to
+    feed in a fresh Jira corpus, but is now a no-op — the index is
+    persisted to disk by `build_embedding_index.py` and loaded at startup.
     """
 
     def __init__(self) -> None:
-        self.embeddings_engine = EmbeddingsEngine()
-        self._indexed = False
+        self.classifier         = EmbeddingClassifier()
+        self.similarity_engine  = EmbeddingSimilarityEngine(classifier=self.classifier)
+        self._indexed = True   # index lives on disk; loaded above
 
     def build_index(self, issues: list) -> None:
-        self.embeddings_engine.build_index(issues)
+        # Kept as a no-op so existing callers (Streamlit app, CLI scripts)
+        # don't crash. The real index is built by `build_embedding_index.py`
+        # and loaded by EmbeddingClassifier at startup.
         self._indexed = True
 
     def triage(
@@ -265,42 +277,75 @@ class HostAgent:
         else:
             emit("consistency:skipped", "Email input — skipping form-consistency check")
 
-        # ── Step 3: embeddings ──────────────────────────────────────────
-        if not self._indexed:
-            raise RuntimeError(
-                "HostAgent.build_index(issues) must be called before .triage()"
-            )
-        emit("embeddings:start", "Embeddings sub-agent — ranking similar bugs across 300 historical tickets…")
-        print("  [host] embeddings sub-agent (ranking similar bugs)...")
-        emb = self.embeddings_engine.find_similar(bug)
-        emit("embeddings:done", f"{len(emb.top_matches)} similar bug(s) ranked")
+        # ── Step 3a: component classification (embedding + Claude fallback) ──
+        # Replaces the in-prompt component_hint that the parser used to return.
+        # Hybrid: LogReg first (~7ms); Claude only if LogReg confidence < 0.5
+        # (~6s extra on borderline cases). Override whatever the parser said.
+        emit("classify:start", "Component classifier — embedding + LogReg…")
+        print("  [host] component classifier (hybrid LogReg/Claude)...")
+        classify_text = f"{bug.title}\n{bug.description}\n{bug.actual_result}"
+        classification = self.classifier.predict(classify_text)
+        bug.component_hint = classification.component
+        emit(
+            "classify:done",
+            f"Component: {classification.component} "
+            f"(conf {classification.confidence:.2f}, {classification.method})"
+        )
+
+        # ── Step 3b: similarity (cosine over the embedding index) ──────
+        # Replaces the old Claude-reads-300-bugs in-context ranking. ~7ms
+        # vs ~30-60s, and embeddings are objectively better at similarity
+        # ranking than in-context LLM judgement.
+        emit("similarity:start", "Similarity engine — cosine search over embedding index…")
+        print("  [host] similarity engine (cosine over embeddings)...")
+        sim_result = self.similarity_engine.find_similar(classify_text)
+        top_matches = sim_result.top_matches
+        emit("similarity:done", f"{len(top_matches)} similar bug(s) ranked")
 
         # ── Step 4: dedup ───────────────────────────────────────────────
         emit("dedup:start", "Dedup sub-agent — deciding duplicate…")
         print("  [host] dedup sub-agent...")
-        dup = decide_duplicate(bug, emb.top_matches)
+        dup = decide_duplicate(bug, top_matches)
         emit(
             "dedup:done",
             f"Likely duplicate of {dup.duplicate_of} ({dup.duplicate_confidence:.0%})"
             if dup.duplicate_of else "No duplicate detected"
         )
 
+        # ── Step 4b: owner suggestion (focused Claude call, constrained
+        #            to the routed component's team roster) ─────────────
+        emit("owner:start", "Owner sub-agent — picking from component-matched roster…")
+        print("  [host] owner sub-agent (constrained to team roster)...")
+        owner_result = suggest_owner(
+            title        = bug.title,
+            description  = bug.description,
+            component    = classification.component,
+            similar_bugs = top_matches,
+            team_roster  = self.classifier.team_roster,
+        )
+        emit(
+            "owner:done",
+            f"Owner: {owner_result.suggested_owner} ({owner_result.method})"
+            if owner_result.suggested_owner else "No confident owner suggestion"
+        )
+
         # ── Step 5: assemble SimilarityResult for downstream consumers ──
         matches_with_dup_flag: list[SimilarBug] = []
-        for m in emb.top_matches:
+        for m in top_matches:
             matches_with_dup_flag.append(SimilarBug(
-                key=m.key,
-                summary=m.summary,
-                similarity=m.similarity,
-                assignee=m.assignee,
-                priority=m.priority,
-                is_duplicate_candidate=(m.key == dup.duplicate_of),
-                url=m.url,
+                key                    = m.key,
+                summary                = m.summary,
+                similarity             = m.similarity,
+                assignee               = m.assignee,
+                priority               = m.priority,
+                is_duplicate_candidate = (m.key == dup.duplicate_of),
+                url                    = m.url,
+                component              = m.component,
             ))
         similarity = SimilarityResult(
             top_matches          = matches_with_dup_flag,
-            suggested_owner      = emb.suggested_owner,
-            owner_reason         = emb.owner_reason,
+            suggested_owner      = owner_result.suggested_owner,
+            owner_reason         = owner_result.owner_reason,
             duplicate_of         = dup.duplicate_of,
             duplicate_confidence = dup.duplicate_confidence,
         )
@@ -319,6 +364,25 @@ class HostAgent:
 
         # ── Step 8: annotate triage_notes with the multi-agent extras ──
         draft.triage_notes["pipeline"] = "multi-agent (Astral)"
+        # Component-classifier provenance — lets a reviewer see whether the
+        # routing came from LogReg's fast path or the Claude fallback, and
+        # the full probability distribution (so the UI can surface low-
+        # confidence ambiguity instead of forcing a single answer).
+        draft.triage_notes["classifier"] = {
+            "component":      classification.component,
+            "confidence":     round(classification.confidence, 3),
+            "method":         classification.method,
+            "probabilities":  (
+                {k: round(v, 3) for k, v in classification.probabilities.items()}
+                if classification.probabilities else None
+            ),
+            "top_neighbours": [
+                {"key": k, "label": lbl, "similarity": round(sim, 3)}
+                for (k, lbl, sim) in classification.top_neighbours
+            ],
+        }
+        # Owner-method provenance: claude / frequency-fallback / no-candidates
+        draft.triage_notes["owner_method"] = owner_result.method
         if media.findings:
             draft.triage_notes["media_findings"] = [
                 {
@@ -357,7 +421,6 @@ class HostAgent:
         return HostResult(
             bug        = bug,
             media      = media,
-            embeddings = emb,
             dedup      = dup,
             similarity = similarity,
             severity   = severity,
