@@ -372,6 +372,7 @@ class HostAgent:
             "component":      classification.component,
             "confidence":     round(classification.confidence, 3),
             "method":         classification.method,
+            "reasoning":      classification.reasoning or None,
             "probabilities":  (
                 {k: round(v, 3) for k, v in classification.probabilities.items()}
                 if classification.probabilities else None
