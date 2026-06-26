@@ -249,7 +249,7 @@ def _classify_with_claude(
     text:           str,
     top_candidates: Optional[list] = None,
     probabilities:  Optional[dict] = None,
-) -> Optional[str]:
+) -> tuple:
     """Focused Claude component-only call used as the hybrid fallback.
 
     If `top_candidates` is provided (a list of component names in
@@ -257,8 +257,13 @@ def _classify_with_claude(
     candidates are injected into the prompt — Claude then reasons over
     real architecture context. If not, falls back to the generic prompt.
 
-    Returns one of the six valid component names, or None if Claude
-    couldn't be reached / returned malformed output. Never raises.
+    Returns `(component, reasoning)`:
+      - component:  one of the six valid names, or None if Claude
+                    couldn't be reached / returned malformed output
+      - reasoning:  Claude's 1-2 sentence explanation, or "" when the
+                    generic (non-skill-aware) prompt was used (it
+                    doesn't ask for reasoning) or when the call failed
+    Never raises.
     """
     try:
         from .claude_cli import call_claude
@@ -280,11 +285,12 @@ def _classify_with_claude(
         response = call_claude(prompt, expect_json=True, timeout=90)
         if isinstance(response, dict):
             comp = str(response.get("component", "")).strip()
+            reasoning = str(response.get("reasoning") or "").strip()
             if comp in _VALID_COMPONENTS:
-                return comp
+                return comp, reasoning
     except Exception:
         pass
-    return None
+    return None, ""
 
 DEFAULT_INDEX_PATH = Path(__file__).parent.parent / "data" / "embedding_index.npz"
 
@@ -313,6 +319,10 @@ class ClassificationResult:
     fell_back_to_bugs: bool         # True if we returned "bugs" because confidence too low
     probabilities:    Optional[dict] = None   # component -> probability, from LogReg.
                                               # None when LogReg isn't available (k-NN fallback).
+    reasoning:        str = ""      # 1-2 sentence explanation, populated when the
+                                    # Claude+skills fallback ran (LogReg fast path
+                                    # leaves this empty — there's no narrative for
+                                    # a high-confidence direct prediction)
 
 
 # ── Embedder (lazy-loaded singleton) ────────────────────────────────────────
@@ -600,7 +610,7 @@ class EmbeddingClassifier:
         # Pass the top-3 candidates so Claude gets architecture context
         # (the skill files for those teams) instead of generic boilerplate.
         top3_candidates = [c for c, _ in sorted(proba_dict.items(), key=lambda kv: -kv[1])[:3]]
-        claude_verdict = _classify_with_claude(
+        claude_verdict, claude_reasoning = _classify_with_claude(
             text,
             top_candidates = top3_candidates,
             probabilities  = proba_dict,
@@ -632,6 +642,7 @@ class EmbeddingClassifier:
             method            = f"claude-fallback (logreg suggested {winner}@{confidence:.2f})",
             top_neighbours    = top_neighbours,
             fell_back_to_bugs = (claude_verdict == "bugs"),
+            reasoning         = claude_reasoning,
             probabilities     = proba_dict,
         )
 

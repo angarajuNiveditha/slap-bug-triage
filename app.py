@@ -628,9 +628,60 @@ def render_triage_md(triage: dict) -> str:
     justification_cell = justification.replace("|", "\\|").replace("\n", "<br>")
     owner_reason_cell  = owner_reason.replace("|", "\\|").replace("\n", "<br>")
 
+    # ── Component reasoning ──────────────────────────────────────────────
+    # On easy bugs LogReg commits with high confidence — no narrative is
+    # needed. On borderline ones (the "aggressive caching" class of bug),
+    # Claude+skills makes the call and returns 1-2 sentences of reasoning
+    # citing which architecture skill's disambiguation rule decided it.
+    # We surface that here so the reviewer can audit / contest the pick.
+    classifier_info = triage.get("classifier") or {}
+    clf_component   = classifier_info.get("component", "?")
+    clf_confidence  = classifier_info.get("confidence", 0.0) or 0.0
+    clf_method      = classifier_info.get("method", "")
+    clf_reasoning   = classifier_info.get("reasoning") or ""
+    clf_probas      = classifier_info.get("probabilities") or {}
+    clf_neighbours  = classifier_info.get("top_neighbours") or []
+
+    if clf_method.startswith("logreg") and not clf_method.endswith("low-conf"):
+        component_reason_cell = (
+            f"Direct prediction from the embedding classifier at "
+            f"**{clf_confidence:.0%}** confidence — high enough that the Claude "
+            f"fallback wasn't needed."
+        )
+    elif clf_reasoning:
+        # Borderline → Claude+skills decided. Show the full distribution +
+        # Claude's explanation grounding the decision in skill content.
+        proba_lines = []
+        for c, p in sorted(clf_probas.items(), key=lambda kv: -kv[1])[:4]:
+            marker = " ← chosen" if c == clf_component else ""
+            proba_lines.append(f"{c} {p:.0%}{marker}")
+        proba_str = " · ".join(proba_lines)
+        neighbour_lines = []
+        for n in clf_neighbours[:3]:
+            neighbour_lines.append(f"{n.get('key','?')} ({n.get('label','?')}, sim {n.get('similarity',0):.2f})")
+        neighbour_str = ", ".join(neighbour_lines)
+        component_reason_cell = (
+            f"**LogReg was unsure** — class probabilities were tight: {proba_str}. "
+            f"The classifier handed the decision to Claude, which reads the top-3 "
+            f"candidate teams' architecture skill files alongside the bug. "
+            f"Claude's reasoning: *{clf_reasoning}* "
+            f"Nearest historical bugs: {neighbour_str}."
+        )
+    elif clf_method == "logreg-low-conf":
+        component_reason_cell = (
+            f"Routed to **`bugs`** (manual triage) — embedding classifier's top "
+            f"class was only **{clf_confidence:.0%}** confident, below the "
+            f"action threshold. The reviewer should pick the component."
+        )
+    else:
+        component_reason_cell = f"Method: `{clf_method}` (confidence {clf_confidence:.0%})"
+
+    component_reason_cell = component_reason_cell.replace("|", "\\|")
+
     lines += [
         "| Field | Value |",
         "|---|---|",
+        f"| **Component reasoning** | {component_reason_cell} |",
         f"| **Triage signals** | `{triage_signals}` |",
         f"| **Severity justification** | {justification_cell} |",
         f"| **Owner reason** | {owner_reason_cell} |",
