@@ -33,6 +33,8 @@ serialize it however it wants.
 
 from __future__ import annotations
 
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -302,32 +304,60 @@ class HostAgent:
         top_matches = sim_result.top_matches
         emit("similarity:done", f"{len(top_matches)} similar bug(s) ranked")
 
-        # ── Step 4: dedup ───────────────────────────────────────────────
-        emit("dedup:start", "Dedup sub-agent — deciding duplicate…")
-        print("  [host] dedup sub-agent...")
-        dup = decide_duplicate(bug, top_matches)
-        emit(
-            "dedup:done",
-            f"Likely duplicate of {dup.duplicate_of} ({dup.duplicate_confidence:.0%})"
-            if dup.duplicate_of else "No duplicate detected"
-        )
+        # ── Step 4: dedup + owner + triage in PARALLEL ──────────────────
+        # All three sub-agents are independent of each other — they take the
+        # same inputs (BugReport + top-K similar bugs, plus the routed
+        # component + team roster for owner) and produce different outputs.
+        # Running them serially used to cost ~20-30s wall-clock; running
+        # them concurrently drops that to max(dedup, owner, triage) ≈ 8-12s.
+        #
+        # Each `claude -p` call spawns its own subprocess so they don't
+        # share state. Inputs are read-only (no race conditions).
+        emit("parallel:start", "Running dedup + owner + triage in parallel (3 sub-agents)…")
+        print("  [host] parallel: dedup + owner + triage…")
+        t_par = time.time()
 
-        # ── Step 4b: owner suggestion (focused Claude call, constrained
-        #            to the routed component's team roster) ─────────────
-        emit("owner:start", "Owner sub-agent — picking from component-matched roster…")
-        print("  [host] owner sub-agent (constrained to team roster)...")
-        owner_result = suggest_owner(
-            title        = bug.title,
-            description  = bug.description,
-            component    = classification.component,
-            similar_bugs = top_matches,
-            team_roster  = self.classifier.team_roster,
-        )
-        emit(
-            "owner:done",
-            f"Owner: {owner_result.suggested_owner} ({owner_result.method})"
-            if owner_result.suggested_owner else "No confident owner suggestion"
-        )
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            futures = {
+                ex.submit(
+                    decide_duplicate, bug, top_matches,
+                ): "dedup",
+                ex.submit(
+                    suggest_owner,
+                    title        = bug.title,
+                    description  = bug.description,
+                    component    = classification.component,
+                    similar_bugs = top_matches,
+                    team_roster  = self.classifier.team_roster,
+                ): "owner",
+                ex.submit(
+                    score_severity, bug, top_matches,
+                ): "triage",
+            }
+            results: dict = {}
+            for fut in as_completed(futures):
+                which = futures[fut]
+                results[which] = fut.result()
+                # Per-sub-agent done event so the UI's live-progress stepper
+                # still shows individual completions as they happen (any order).
+                if which == "dedup":
+                    r = results[which]
+                    emit("dedup:done",
+                         f"Likely duplicate of {r.duplicate_of} ({r.duplicate_confidence:.0%})"
+                         if r.duplicate_of else "No duplicate detected")
+                elif which == "owner":
+                    r = results[which]
+                    emit("owner:done",
+                         f"Owner: {r.suggested_owner} ({r.method})"
+                         if r.suggested_owner else "No confident owner suggestion")
+                elif which == "triage":
+                    r = results[which]
+                    emit("triage:done", f"Assigned {r.priority} ({r.severity})")
+
+        dup          = results["dedup"]
+        owner_result = results["owner"]
+        severity     = results["triage"]
+        print(f"  [host] parallel block done in {time.time()-t_par:.1f}s")
 
         # ── Step 5: assemble SimilarityResult for downstream consumers ──
         matches_with_dup_flag: list[SimilarBug] = []
@@ -349,12 +379,6 @@ class HostAgent:
             duplicate_of         = dup.duplicate_of,
             duplicate_confidence = dup.duplicate_confidence,
         )
-
-        # ── Step 6: triage / severity ───────────────────────────────────
-        emit("triage:start", "Triage sub-agent — assigning priority…")
-        print("  [host] triage sub-agent...")
-        severity = score_severity(bug, similarity.top_matches)
-        emit("triage:done", f"Assigned {severity.priority} ({severity.severity})")
 
         # ── Step 7: build the Jira ticket draft ─────────────────────────
         emit("build:start", "Building Jira ticket draft…")
