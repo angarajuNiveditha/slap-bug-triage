@@ -17,9 +17,11 @@ data/embedding_index_team_roster.json
 # Cloned SLAP code repos (contain proprietary code — never commit)
 data/repos/
 
-# Auto-generated per-repo skill files (built from the clones above —
-# they include README excerpts and commit metadata. Treat as local-only.)
-slap_context/architecture/repos/
+# Per-repo skill files — these ARE committed so mentors / new contributors
+# don't need to clone the proprietary SLAP repos or run build_repo_skills.py
+# to get the architecture context. Only the .DS_Store inside the folder is
+# excluded so it doesn't slip in.
+slap_context/architecture/repos/.DS_Store
 
 # Backend label-noise audit output — contains real bug titles, reporter
 # emails, and Google Chat links. Treat as local-only.
