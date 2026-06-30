@@ -58,6 +58,44 @@ DEFAULT_TIMEOUT = 180   # seconds — large-context similarity calls can take ~3
 _FENCE_RE = re.compile(r"^\s*```(?:json|JSON)?\s*\n?(.*?)\n?```\s*$", re.DOTALL)
 
 
+def _extract_first_json_object(text: str) -> Optional[str]:
+    """
+    Find the first balanced {...} object in `text`, respecting string
+    literals and escapes. Returns the substring (including the outer
+    braces) or None if no balanced object is found.
+
+    Used as a tolerant fallback when Claude prefixes the JSON with prose
+    like "Let me reason over this step by step..." despite the prompt
+    asking for JSON only. Better to recover than to fail the whole call.
+    """
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth     = 0
+    in_string = False
+    escape    = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape:
+            escape = False
+            continue
+        if in_string:
+            if ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return None
+
+
 class ClaudeCallError(RuntimeError):
     """Raised when the `claude -p` subprocess fails or returns unparseable output."""
 
@@ -135,7 +173,17 @@ def call_claude(
 
     try:
         return json.loads(result_text)
-    except json.JSONDecodeError as e:
+    except json.JSONDecodeError as first_err:
+        # Recover gracefully if Claude prefixed the JSON with prose
+        # ("Let me reason over this... {...}") despite the prompt asking
+        # for JSON only. Extract the first balanced {...} block and try
+        # again. If that also fails, surface the original error.
+        candidate = _extract_first_json_object(result_text)
+        if candidate is not None:
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
         raise ClaudeCallError(
-            f"Could not parse Claude result as JSON: {e}\nRaw (first 500 chars): {result_text[:500]}"
+            f"Could not parse Claude result as JSON: {first_err}\nRaw (first 500 chars): {result_text[:500]}"
         )
