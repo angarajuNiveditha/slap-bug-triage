@@ -247,8 +247,12 @@ class HostAgent:
             emit("media:start", f"Media sub-agent processing {len(image_paths)} attachment(s)…")
             print(f"  [host] media sub-agent processing {len(image_paths)} image(s)...")
             # Pass the email text so the media sub-agent can compare what
-            # the reporter wrote with what the images actually show.
-            media = process_attachments(image_paths, email_text=raw_text)
+            # the reporter wrote with what the images actually show. The
+            # callback bubbles sub-stage events (Gemini vision, Claude
+            # reasoning, fallback) up to the UI's live-progress stepper.
+            def _media_progress(event: str, message: str) -> None:
+                emit(f"media:{event}", message)
+            media = process_attachments(image_paths, email_text=raw_text, on_progress=_media_progress)
             emit("media:done", f"Media analysed — {len(media.findings)} finding(s)")
         else:
             emit("media:skipped", "No attachments — skipping media sub-agent")

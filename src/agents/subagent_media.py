@@ -30,11 +30,14 @@ import json
 import re
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from time import perf_counter
+from typing import Callable, Optional
 
-from ..claude_cli import call_claude
+from ..claude_cli      import call_claude
+from ..genvoy_client   import GeminiUnavailable, gemini_describe_image, is_configured as gemini_configured
 
 PROJECT_ROOT      = Path(__file__).resolve().parent.parent.parent
 SLAP_CONTEXT_DIR  = PROJECT_ROOT / "slap_context"
@@ -185,7 +188,94 @@ def _extract_keyframes(video_path: str, out_dir: Path, max_frames: int = MAX_KEY
     return sorted(out_dir.glob("frame_*.png"))
 
 
-# ── Image prompt + processing (unchanged) ─────────────────────────────────
+# ── Image prompts ──────────────────────────────────────────────────────────
+#
+# Two-stage image flow (preferred):
+#
+#   Stage 1 — Gemini (vision)
+#     Per-image, parallel. Free-prose description of what's visible on the
+#     screen (text, UI elements, anomalies, device hints). No SLAP context
+#     needed — Gemini just reports what it sees. ~2-3s per image, parallel.
+#
+#   Stage 2 — Claude (reasoning)
+#     One call. Reads SLAP_KNOWLEDGE.md + reference_screens/ via the Read
+#     tool, takes the Gemini descriptions as inline text, and emits the
+#     structured MediaFinding JSON (screen label, triage signals, contra-
+#     diction detection). Claude never has to load the actual image bytes
+#     here — the vision pass already extracted everything visual.
+#
+# Fallback — single Claude call with image access (the legacy path,
+# `IMAGE_PROMPT_TEMPLATE` below). Used when Gemini is unavailable
+# (env vars unset, JWT expired, network unreachable off-corp, etc.).
+#
+# The host doesn't see any of this — `process_attachments()` returns the
+# same MediaResult shape either way.
+
+VISION_PROMPT = """You are looking at a screenshot from a mobile app (Flipkart's SLAP — a conversational shopping app). Describe what you see in plain prose. Be thorough — your output is passed to a downstream agent that does NOT see the image, so visual details matter.
+
+Cover:
+1. ALL visible text on the screen — labels, buttons, prices, headers, error messages, system status, placeholder text. Quote them verbatim wherever possible.
+2. UI elements present (input fields, buttons, lists, cards, modals, images, navigation bars, chat bubbles) and the state of each (normal, loading, empty, disabled, error).
+3. Visual anomalies — anything that looks broken, missing, clipped, misaligned, mis-rendered, wrongly coloured, overlapping, or out of place.
+4. Device / platform hints — status-bar style, notch / home indicator, system font, navigation pattern. Note any visible OS version or app build number.
+5. Apparent purpose of the screen (chat, search, product details, cart, checkout, login, profile, etc.) — best guess only, don't over-commit if unsure.
+
+Reply in plain prose. No JSON, no markdown headers, no bullet lists — just descriptive sentences."""
+
+
+REASONING_PROMPT_TEMPLATE = """You are the SLAP media-processor sub-agent's reasoning stage. A vision model has already inspected each bug-report attachment and produced a plain-prose description; YOUR job is to map those descriptions onto the SLAP screen catalog and emit structured triage findings.
+
+You have access via the Read tool to:
+  1. SLAP knowledge document : {knowledge_path}  (READ THIS FIRST — screen catalog, vocabulary, visual triage cues)
+  2. Canonical reference screens : {reference_dir}/   (each filename is a screen label; use Glob to browse if you need to confirm which screen a description matches)
+
+THE BUG REPORT EMAIL THE USER ALSO ATTACHED (verbatim):
+---
+{email_text}
+---
+
+VISION DESCRIPTIONS — one block per attachment, in order:
+{vision_blocks}
+
+For EACH attachment, produce a JSON object with this exact shape:
+
+{{
+  "image_path":       "<path of the image (matches the 'Attachment N: <path>' header in the vision block)>",
+  "screen":           "<SLAP screen name from the catalog, or 'unknown'>",
+  "state":            "normal | loading | error | empty | unknown",
+  "visible_text":     ["literal strings extracted from the vision description"],
+  "error_indicators": ["specific error messages or visual error states"],
+  "ui_anomalies":     ["specific things that look wrong, missing, or out of place"],
+  "device_hints":     {{"platform": "Android | iOS | unknown", "os_visible": "..." | null, "app_version_visible": "..." | null}},
+  "triage_signals":   {{"likely_component": "Backend | Backend-Labs | DS | UI | immersive | bugs",
+                       "severity_hint":    "P0 | P1 | P2 | P3",
+                       "contradicts_email_claim": "<see CONTRADICTION DETECTION below>"}},
+  "one_line_summary": "Single sentence that captures the bug evidence from this image."
+}}
+
+CONTRADICTION DETECTION (very important)
+Compare what the email describes to what the vision description actually shows, and set `contradicts_email_claim` AGGRESSIVELY. Set it to a one-sentence description of the mismatch in any of these cases:
+
+  • The image shows a different SLAP screen / feature than the one the email is about.
+    Example: email is about "Checkout / Proceed to Pay crash" but the image shows "Phone login / OTP" — contradicts_email_claim should say "Email reports a checkout-flow crash but the attached image is the phone-login screen with an OTP error — different feature areas."
+
+  • The image shows no anomaly / a normal happy-path state while the email claims something is broken.
+  • The image shows a different platform than the email states (e.g. email says Android, image shows iOS — or vice versa).
+  • The image's visible error message or symptom does not match the symptom the email describes.
+
+Only set `contradicts_email_claim` to null when the image evidence clearly supports or is plausibly relevant to what the email is describing. When in doubt, FLAG IT — a triage analyst can override a false flag, but a missed contradiction wastes engineering time on the wrong bug.
+
+Reply with ONLY a JSON object of the form:
+
+{{
+  "findings":         [ <one entry per attachment, in the same order as the vision blocks above> ],
+  "combined_summary": "1-3 sentence aggregate across ALL attachments — what the images jointly tell us about the bug, and whether they agree with the email"
+}}
+
+No markdown fences, no commentary outside the JSON."""
+
+
+# ── Legacy single-Claude-call image prompt (fallback path) ────────────────
 
 IMAGE_PROMPT_TEMPLATE = """You are the SLAP media-processor sub-agent. You analyze image attachments from bug reports about Flipkart's SLAP conversational shopping app.
 
@@ -243,39 +333,115 @@ Reply with ONLY a JSON object of the form:
 No markdown fences, no commentary outside the JSON."""
 
 
-def _process_images(image_paths: list, email_text: str) -> tuple:
+def _noop_progress(_event: str, _message: str) -> None:
+    """Default on_progress callback when the caller doesn't provide one."""
+
+
+def _process_images(
+    image_paths: list,
+    email_text:  str,
+    on_progress: Callable[[str, str], None] = _noop_progress,
+) -> tuple:
     """
     Returns (findings: list[MediaFinding], combined_summary: str, raw: dict).
+
+    Preferred path is two-stage: Gemini does per-image vision in parallel,
+    Claude does the SLAP-aware reasoning over the resulting text. Falls
+    back to a single Claude call (legacy path) if Gemini isn't reachable
+    (env vars unset, JWT expired, off-corp network, etc.).
+
+    Calls `on_progress(event, message)` at sub-stage boundaries so the
+    host (and Streamlit UI) can render live progress. Event names are
+    *unprefixed* — the host adds the `media:` prefix.
     """
     abs_paths = [str(Path(p).resolve()) for p in image_paths]
-    image_list_str = "\n".join(f"  - {p}" for p in abs_paths)
+    n         = len(abs_paths)
 
-    prompt = IMAGE_PROMPT_TEMPLATE.format(
-        knowledge_path  = str(SLAP_KNOWLEDGE),
-        reference_dir   = str(REFERENCE_SCREENS),
-        email_text      = (email_text or "(no email body provided)").strip(),
-        bug_image_paths = image_list_str,
+    if gemini_configured():
+        on_progress("vision:start", f"Gemini vision — describing {n} image(s) in parallel…")
+        t0 = perf_counter()
+        try:
+            descriptions = _gemini_describe_images_parallel(abs_paths)
+            dt = perf_counter() - t0
+            print(f"  [media] Gemini described {n} image(s) in {dt:.1f}s; handing off to Claude for reasoning.")
+            on_progress("vision:done", f"Gemini described {n} image(s) in {dt:.1f}s")
+            return _process_images_gemini_then_claude(abs_paths, email_text, descriptions, on_progress)
+        except GeminiUnavailable as e:
+            print(f"  [media] Gemini unavailable ({e}); falling back to Claude vision.")
+            on_progress("vision:fallback", f"Gemini unavailable ({e}) — falling back to Claude vision")
+
+    on_progress("fallback:start", f"Claude vision + reasoning — single pass over {n} image(s)…")
+    t0 = perf_counter()
+    result = _process_images_claude_only(abs_paths, email_text)
+    on_progress("fallback:done", f"Claude vision + reasoning complete ({perf_counter() - t0:.1f}s)")
+    return result
+
+
+def _gemini_describe_images_parallel(image_paths: list) -> dict:
+    """
+    Describe each image with Gemini in parallel. Returns {abs_path: description}.
+    Raises GeminiUnavailable on the first failure — we'd rather fall back to
+    the Claude vision path for the whole batch than ship a half-Gemini /
+    half-Claude result.
+    """
+    descriptions: dict = {}
+    workers = min(max(len(image_paths), 1), 4)
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        future_to_path = {
+            ex.submit(gemini_describe_image, p, VISION_PROMPT): p
+            for p in image_paths
+        }
+        try:
+            for fut in as_completed(future_to_path):
+                path = future_to_path[fut]
+                descriptions[path] = fut.result()
+        except GeminiUnavailable:
+            for f in future_to_path:
+                f.cancel()
+            raise
+    return descriptions
+
+
+def _process_images_gemini_then_claude(
+    image_paths: list,
+    email_text:  str,
+    descriptions: dict,
+    on_progress: Callable[[str, str], None] = _noop_progress,
+) -> tuple:
+    """
+    Reasoning pass: feed the Gemini vision descriptions to Claude along
+    with the SLAP knowledge doc + reference-screen directory, and emit the
+    structured MediaFinding JSON.
+    """
+    on_progress(
+        "reasoning:start",
+        "Claude reasoning — mapping descriptions to SLAP screens + triage signals…",
+    )
+    t0 = perf_counter()
+    vision_blocks = "\n\n".join(
+        f"--- Attachment {i + 1}: {p} ---\n{descriptions[p]}"
+        for i, p in enumerate(image_paths)
     )
 
-    add_dirs = [str(SLAP_CONTEXT_DIR)]
-    for p in abs_paths:
-        parent = str(Path(p).parent)
-        if parent not in add_dirs:
-            add_dirs.append(parent)
+    prompt = REASONING_PROMPT_TEMPLATE.format(
+        knowledge_path = str(SLAP_KNOWLEDGE),
+        reference_dir  = str(REFERENCE_SCREENS),
+        email_text     = (email_text or "(no email body provided)").strip(),
+        vision_blocks  = vision_blocks,
+    )
 
     response = call_claude(
         prompt,
-        expect_json=True,
-        timeout=300,
-        add_dirs=add_dirs,
-        allowed_tools=["Read", "Glob"],
+        expect_json   = True,
+        timeout       = 240,
+        add_dirs      = [str(SLAP_CONTEXT_DIR)],
+        allowed_tools = ["Read", "Glob"],
     )
     if not isinstance(response, dict):
-        raise ValueError(f"Media sub-agent (images) returned non-object: {type(response).__name__}")
+        raise ValueError(f"Media sub-agent (reasoning) returned non-object: {type(response).__name__}")
 
-    findings = []
-    for entry in response.get("findings") or []:
-        findings.append(MediaFinding(
+    findings = [
+        MediaFinding(
             image_path       = entry.get("image_path", ""),
             screen           = entry.get("screen", "unknown"),
             state            = entry.get("state", "unknown"),
@@ -286,7 +452,59 @@ def _process_images(image_paths: list, email_text: str) -> tuple:
             triage_signals   = entry.get("triage_signals") or {},
             one_line_summary = entry.get("one_line_summary", ""),
             kind             = "image",
-        ))
+        )
+        for entry in (response.get("findings") or [])
+    ]
+    on_progress("reasoning:done", f"Claude reasoning complete ({perf_counter() - t0:.1f}s, {len(findings)} finding(s))")
+    return findings, response.get("combined_summary", ""), response
+
+
+def _process_images_claude_only(image_paths: list, email_text: str) -> tuple:
+    """
+    Legacy single-Claude-call image path. Claude loads each image via the
+    Read tool and produces the structured MediaFinding JSON directly. Used
+    as the fallback when Gemini is unavailable.
+    """
+    image_list_str = "\n".join(f"  - {p}" for p in image_paths)
+
+    prompt = IMAGE_PROMPT_TEMPLATE.format(
+        knowledge_path  = str(SLAP_KNOWLEDGE),
+        reference_dir   = str(REFERENCE_SCREENS),
+        email_text      = (email_text or "(no email body provided)").strip(),
+        bug_image_paths = image_list_str,
+    )
+
+    add_dirs = [str(SLAP_CONTEXT_DIR)]
+    for p in image_paths:
+        parent = str(Path(p).parent)
+        if parent not in add_dirs:
+            add_dirs.append(parent)
+
+    response = call_claude(
+        prompt,
+        expect_json   = True,
+        timeout       = 300,
+        add_dirs      = add_dirs,
+        allowed_tools = ["Read", "Glob"],
+    )
+    if not isinstance(response, dict):
+        raise ValueError(f"Media sub-agent (images) returned non-object: {type(response).__name__}")
+
+    findings = [
+        MediaFinding(
+            image_path       = entry.get("image_path", ""),
+            screen           = entry.get("screen", "unknown"),
+            state            = entry.get("state", "unknown"),
+            visible_text     = entry.get("visible_text") or [],
+            error_indicators = entry.get("error_indicators") or [],
+            ui_anomalies     = entry.get("ui_anomalies") or [],
+            device_hints     = entry.get("device_hints") or {},
+            triage_signals   = entry.get("triage_signals") or {},
+            one_line_summary = entry.get("one_line_summary", ""),
+            kind             = "image",
+        )
+        for entry in (response.get("findings") or [])
+    ]
     return findings, response.get("combined_summary", ""), response
 
 
@@ -429,16 +647,28 @@ def _process_one_video(video_path: str, email_text: str) -> MediaFinding:
 
 # ── Public API ─────────────────────────────────────────────────────────────
 
-def process_attachments(paths: list, email_text: str = "") -> MediaResult:
+def process_attachments(
+    paths:       list,
+    email_text:  str = "",
+    on_progress: Optional[Callable[[str, str], None]] = None,
+) -> MediaResult:
     """
     Analyse a list of attachment paths (images and/or videos) and return a
-    MediaResult. Images are batched into one Claude call; each video gets
-    its own call so the prompt can reason about the keyframe sequence.
+    MediaResult. Images go through the two-stage Gemini-vision → Claude-
+    reasoning path (with a Claude-only fallback); each video gets its own
+    Claude call so the prompt can reason about the keyframe sequence.
+
+    `on_progress(event, message)` is called at sub-stage boundaries so the
+    host (and Streamlit UI) can render live progress. Event names from
+    here are unprefixed (e.g. "vision:start"); the host adds the "media:"
+    prefix.
 
     If `paths` is empty, returns an empty MediaResult immediately.
     """
     if not paths:
         return MediaResult(findings=[], combined_summary="")
+
+    cb = on_progress or _noop_progress
 
     path_objs    = [Path(p) for p in paths]
     image_paths  = [str(p) for p in path_objs if _is_image(p)]
@@ -449,14 +679,19 @@ def process_attachments(paths: list, email_text: str = "") -> MediaResult:
     raw_responses: list[dict]    = []
 
     if image_paths:
-        image_findings, image_combined_summary, image_raw = _process_images(image_paths, email_text)
+        image_findings, image_combined_summary, image_raw = _process_images(
+            image_paths, email_text, on_progress=cb,
+        )
         findings.extend(image_findings)
         if image_raw:
             raw_responses.append(image_raw)
 
-    for vp in video_paths:
+    for i, vp in enumerate(video_paths, start=1):
+        cb("video:start", f"Video {i}/{len(video_paths)} ({Path(vp).name}) — extracting keyframes + Claude pass…")
+        t0 = perf_counter()
         video_finding = _process_one_video(vp, email_text)
         findings.append(video_finding)
+        cb("video:done", f"Video {i}/{len(video_paths)} analysed ({perf_counter() - t0:.1f}s)")
 
     # Build a unified combined_summary across images + videos. We use the
     # image batch's combined_summary (when present) and append each video's
