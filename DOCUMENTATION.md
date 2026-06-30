@@ -511,57 +511,132 @@ The single highest-leverage move is **#1 (relabel Backend)** — it's measurable
 
 ---
 
-## 13. Quick start
+## 13. Quick start — running from scratch
 
-### Setup
+This is the full from-zero setup. Anyone with a Flipkart Atlassian account + Claude Desktop should be able to follow this and have a working triage UI in ~15 minutes.
+
+### 1. Clone the repo
 
 ```bash
-# First time
+git clone https://github.com/angarajuNiveditha/slap-bug-triage.git
+cd slap-bug-triage
+```
+
+### 2. Install Claude Code CLI + sign in
+
+The multi-agent pipeline talks to Claude via the local `claude -p` binary, **not** an `ANTHROPIC_API_KEY`. So no API key is needed — your locally-signed-in Claude session provides authentication.
+
+```bash
+# Mac
+brew install --cask claude
+
+# Then open Claude Desktop, sign in with your Flipkart Google account.
+# Verify the CLI is on the PATH:
+which claude        # should print a path
+echo "ping" | claude -p   # should respond
+```
+
+### 3. Install Python dependencies
+
+```bash
 pip3 install -r requirements.txt
-
-# Minimal install (skip the SDK pipeline)
-pip3 install requests python-dotenv numpy scikit-learn streamlit
 ```
 
-The multi-agent pipeline additionally requires the **Claude Code CLI** installed and authenticated on the machine (`which claude` should return a path). No `ANTHROPIC_API_KEY` is needed — the CLI uses the local Claude Desktop session.
+Pulls `requests`, `python-dotenv`, `numpy`, `scikit-learn`, `streamlit`, `sentence-transformers>=2.7.0`, `imageio-ffmpeg`. ~5 min depending on connection. The sentence-transformer model itself (~420 MB) downloads on first triage, not during install.
 
-### Environment variables (`.env`)
+### 4. Configure `.env` with YOUR credentials
+
+```bash
+cp .env.example .env
+# then edit .env
+```
+
+Required fields:
 
 ```
-JIRA_EMAIL=angaraju.v@flipkart.com
-JIRA_TOKEN=<flipkart atlassian API token>
+JIRA_EMAIL=<your flipkart email>
+JIRA_TOKEN=<your Atlassian PAT — generate at id.atlassian.com/manage-profile/security/api-tokens>
 JIRA_BASE_URL=https://flipkart.atlassian.net
 JIRA_PROJECT=FLIPPI
-ANTHROPIC_API_KEY=            # only needed for main.py
 
-# GitHub Enterprise (github.fkinternal.com) — read-only token used by
-# src/repo_context.py and build_repo_skills.py to clone SLAP repos for
-# code-aware classification. Needs the `repo` scope to read private repos.
-GITHUB_FK_BASE=https://github.fkinternal.com
-GITHUB_FK_TOKEN=<github enterprise PAT>     # repo + read:org scopes recommended
-
-# Pin the Claude binary so the pipeline survives corp endpoint security
-# deleting brew-installed copies. The path below points at Claude Desktop's
-# bundled CLI; override when Claude Desktop updates.
-CLAUDE_BIN=/Users/.../Claude/claude-code/<version>/claude.app/Contents/MacOS/claude
+# Leave empty — the multi-agent pipeline uses the local claude -p CLI
+ANTHROPIC_API_KEY=
 ```
 
-### Running
+Optional fields:
+
+```
+# Gemini API key (only if you want to test the hybrid media sub-agent —
+# get one at aistudio.google.com)
+GEMINI_API_KEY=
+
+# Pin a specific Claude binary path. Auto-detected on most macs.
+CLAUDE_BIN=
+```
+
+You do NOT need a GitHub Enterprise token for the mentor flow — the per-repo skill files are already checked into this repo (under `slap_context/architecture/repos/`).
+
+### 5. Build the embedding index (one-time, ~75 seconds)
 
 ```bash
-# Streamlit front-end (recommended)
+python3 build_embedding_index.py
+```
+
+This fetches ~564 component-labelled FLIPPI bugs from Jira (last 15 months), embeds each with sentence-transformers, trains the LogReg classifier, and derives the team roster from assignee history. Writes three files to `data/`:
+
+- `embedding_index.npz` — embeddings + labels + texts + assignees + priorities
+- `embedding_index_logreg.pkl` — trained LogReg model
+- `embedding_index_team_roster.json` — team → engineer roster
+
+These are local to your machine (gitignored).
+
+### 6. Launch the Streamlit UI
+
+```bash
 streamlit run app.py
 # → http://localhost:8501
+```
 
-# Multi-agent pipeline directly (CLI)
-python3 run_multi_agent.py                                  # all text + media bugs
-python3 run_multi_agent.py data/bug_01_p0_checkout_crash.txt
-python3 run_multi_agent.py data/bug_with_media/bug_m01_checkout_crash_screenshot
-# Output → output_claude/ticket_<label>_<timestamp>.json
+First load fetches a 300-bug similarity corpus and warms the embedding model (~10 s). Subsequent triages are fast.
 
-# Rule-based pipeline directly (CLI)
-python3 run_agent.py                                        # all data/*.txt
-python3 run_agent.py data/bug_01_p0_checkout_crash.txt
+### 7. Try a few test bugs
+
+The repo ships with labelled test bugs you can paste into the Email mode of the UI, or run via CLI:
+
+```bash
+python3 run_multi_agent.py data/bug_01_p0_checkout_crash.txt        # P0 / UI
+python3 run_multi_agent.py data/bug_02_p1_search_wrong_results.txt  # P1 / DS
+python3 run_multi_agent.py data/bug_aggressive_caching.txt          # ambiguous → Claude+skills fallback
+```
+
+Each writes a ticket draft into `output_claude/`.
+
+### 8. (Optional) Reproduce the measured numbers
+
+```bash
+python3 validate_embedding_classifier.py    # ~3 s — LOO accuracy (66.8%)
+python3 validate_claude_component.py        # ~24 min — pure Claude baseline (65.1%)
+python3 validate_hybrid_classifier.py       # ~14 min — hybrid (69.5%)
+python3 audit_backend_misclassifications.py # ~3 s — Backend label-noise audit
+```
+
+Numbers match what's in `CHANGELOG.md`.
+
+### 9. (Optional) Test Gemini for the hybrid media sub-agent
+
+If you've set `GEMINI_API_KEY` in `.env`:
+
+```bash
+python3 test_gemini.py                          # network + key + text generation
+python3 test_gemini.py path/to/screenshot.png   # also test vision
+```
+
+### Rule-based fallback pipeline
+
+For fast deterministic iteration without Claude in the loop:
+
+```bash
+python3 run_agent.py data/bug_01_p0_checkout_crash.txt   # ~35 ms per bug
 # Output → output/ticket_<stem>_<timestamp>.json
 ```
 
