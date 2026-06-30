@@ -44,9 +44,9 @@ venv/
 # sentence-transformers model cache
 .cache/
 
-# SLAP design references (Figma-exported PNGs) — kept local-only;
-# they are unreleased product designs. SLAP_KNOWLEDGE.md is OK to commit.
-slap_context/reference_screens/
+# slap_context/reference_screens/ — SLAP design references (Figma-exported
+# PNGs). Now COMMITTED so the media sub-agent has its visual reference set
+# right after a clone, without needing access to the Figma source.
 
 # Bug attachment images + videos — gitignored because the demo copies them
 # from slap_context (unreleased designs) and the video recordings can be
