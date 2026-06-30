@@ -201,6 +201,76 @@ st.markdown(
           z-index: 1;
       }
 
+      /* Sub-stages under a vnode (used for Media → Gemini vision + Claude reasoning) */
+      .pipe-vnode-substages {
+          margin-top: 6px;
+          display: flex; flex-direction: column;
+          gap: 4px;
+      }
+      .pipe-vnode-substage {
+          display: flex; align-items: baseline; gap: 7px;
+          font-size: 11px; color: #57534E; line-height: 1.35;
+      }
+      .pipe-vnode-substage::before {
+          content: "▸"; color: #E11D74;
+          font-size: 9px; line-height: 1; flex-shrink: 0;
+      }
+      .pipe-vnode-substage strong {
+          color: #18181B; font-weight: 600;
+      }
+      .pipe-vnode-substage .stage-tag {
+          background: #FCE7F0; color: #BE185D;
+          font-size: 9px; font-weight: 700; letter-spacing: 0.6px;
+          padding: 1px 5px; border-radius: 999px;
+          text-transform: uppercase;
+          margin-left: 4px; vertical-align: middle;
+      }
+
+      /* Parallel-execution wrap (Dedup + Owner + Triage run concurrently) */
+      .pipe-parallel-wrap {
+          position: relative;
+          width: 100%;
+          margin: 0;
+      }
+      /* Thick highlight bar OVER the existing rail line, spanning the
+         three concurrent nodes — visually brackets them as one group. */
+      .pipe-parallel-wrap::before {
+          content: ""; position: absolute;
+          left: 12px; top: 28px; bottom: 8px;
+          width: 8px; border-radius: 4px;
+          background: linear-gradient(180deg, #F9A8D4 0%, #FBCFE0 50%, #F9A8D4 100%);
+          z-index: 0;
+      }
+      /* Small connector down to the next sibling (Output) below the wrap. */
+      .pipe-parallel-wrap::after {
+          content: ""; position: absolute;
+          left: 15px; bottom: -2px;
+          width: 2px; height: 10px;
+          background: #F0EFEB;
+          z-index: 1;
+      }
+      .pipe-parallel-tag {
+          display: inline-block;
+          background: #E11D74; color: white;
+          font-size: 9px; font-weight: 800; letter-spacing: 1.3px;
+          padding: 3px 9px; border-radius: 999px;
+          margin: 2px 0 8px 44px;
+          position: relative; z-index: 2;
+          box-shadow: 0 2px 6px -2px rgba(225, 29, 116, 0.4);
+      }
+      /* Inside the wrap, the per-vnode sequential connectors are hidden —
+         these three run concurrently, not in sequence. The pink bracket
+         bar above provides the visual grouping. */
+      .pipe-parallel-wrap .pipe-vnode::before {
+          display: none !important;
+      }
+      .pipe-parallel-wrap .pipe-vnode {
+          padding: 2px 0;
+      }
+      .pipe-parallel-wrap .pipe-vnode-text {
+          padding-bottom: 10px;
+      }
+
       /* ── Section labels (subtler, no boxes) ───────────────────────── */
       .section-label {
           font-size: 15px; font-weight: 700; letter-spacing: 1.4px;
@@ -835,7 +905,11 @@ PIPELINE_RAIL_HTML = """
     <div class="pipe-vnode-icon">M</div>
     <div class="pipe-vnode-text">
       <div class="pipe-vnode-name">Media</div>
-      <div class="pipe-vnode-desc">Reads attachments, identifies the SLAP screen, extracts visible bug evidence.</div>
+      <div class="pipe-vnode-desc">Two-stage pass over attachments.</div>
+      <div class="pipe-vnode-substages">
+        <div class="pipe-vnode-substage"><span><strong>Gemini</strong> <span class="stage-tag">vision</span> — per-image description in parallel.</span></div>
+        <div class="pipe-vnode-substage"><span><strong>Claude</strong> <span class="stage-tag">reasoning</span> — maps to SLAP screens + triage signals.</span></div>
+      </div>
     </div>
   </div>
 
@@ -863,27 +937,28 @@ PIPELINE_RAIL_HTML = """
     </div>
   </div>
 
-  <div class="pipe-vnode">
-    <div class="pipe-vnode-icon">D</div>
-    <div class="pipe-vnode-text">
-      <div class="pipe-vnode-name">Dedup</div>
-      <div class="pipe-vnode-desc">Duplicate decision over the top-5 (≥ 0.80 confidence).</div>
+  <div class="pipe-parallel-wrap">
+    <div class="pipe-parallel-tag">3 IN PARALLEL</div>
+    <div class="pipe-vnode">
+      <div class="pipe-vnode-icon">D</div>
+      <div class="pipe-vnode-text">
+        <div class="pipe-vnode-name">Dedup</div>
+        <div class="pipe-vnode-desc">Duplicate decision over the top-5 (≥ 0.80 confidence).</div>
+      </div>
     </div>
-  </div>
-
-  <div class="pipe-vnode">
-    <div class="pipe-vnode-icon">O</div>
-    <div class="pipe-vnode-text">
-      <div class="pipe-vnode-name">Owner</div>
-      <div class="pipe-vnode-desc">Picks an owner from the routed component's team roster, grounded in similar past bugs.</div>
+    <div class="pipe-vnode">
+      <div class="pipe-vnode-icon">O</div>
+      <div class="pipe-vnode-text">
+        <div class="pipe-vnode-name">Owner</div>
+        <div class="pipe-vnode-desc">Picks an owner from the routed component's team roster, grounded in similar past bugs.</div>
+      </div>
     </div>
-  </div>
-
-  <div class="pipe-vnode">
-    <div class="pipe-vnode-icon">T</div>
-    <div class="pipe-vnode-text">
-      <div class="pipe-vnode-name">Triage</div>
-      <div class="pipe-vnode-desc">Assigns priority P0 / P1 / P2 with a plain-English justification.</div>
+    <div class="pipe-vnode">
+      <div class="pipe-vnode-icon">T</div>
+      <div class="pipe-vnode-text">
+        <div class="pipe-vnode-name">Triage</div>
+        <div class="pipe-vnode-desc">Assigns priority P0 / P1 / P2 with a plain-English justification.</div>
+      </div>
     </div>
   </div>
 
@@ -1065,15 +1140,21 @@ if triage_btn:
 
                 # Stream live step updates as each sub-agent actually
                 # finishes, not all at once before host.triage() runs.
+                # Nested events ("media:vision:start", "media:reasoning:done",
+                # …) get one level of indentation per extra colon so the
+                # two-stage media flow reads as a hierarchy in the UI.
                 step_icons = {
-                    "start":   "▸",
-                    "done":    "✓",
-                    "skipped": "⊘",
+                    "start":    "▸",
+                    "done":     "✓",
+                    "skipped":  "⊘",
+                    "fallback": "⚠",
                 }
                 def on_step(event: str, message: str) -> None:
-                    _, suffix = event.split(":", 1) if ":" in event else (event, event)
-                    icon = step_icons.get(suffix, "•")
-                    st.markdown(f"{icon} {message}")
+                    parts  = event.split(":") if event else [""]
+                    suffix = parts[-1]
+                    icon   = step_icons.get(suffix, "•")
+                    indent = "&nbsp;&nbsp;&nbsp;&nbsp;" * max(len(parts) - 2, 0)
+                    st.markdown(f"{indent}{icon} {message}", unsafe_allow_html=True)
 
                 # Defensive: Streamlit's @st.cache_resource may be holding
                 # a HostAgent instance built before on_step / from_form
