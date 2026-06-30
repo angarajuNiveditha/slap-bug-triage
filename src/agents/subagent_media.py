@@ -508,7 +508,87 @@ def _process_images_claude_only(image_paths: list, email_text: str) -> tuple:
     return findings, response.get("combined_summary", ""), response
 
 
-# ── Video prompt + processing ──────────────────────────────────────────────
+# ── Video prompts ──────────────────────────────────────────────────────────
+#
+# Mirrors the image two-stage flow:
+#
+#   Stage 1 — Gemini (vision, per-frame, parallel)
+#     Each ffmpeg-extracted keyframe gets `VIDEO_FRAME_VISION_PROMPT`. The
+#     prompt is sequence-aware: each frame describes one moment in time
+#     (interaction state, error visibility, scroll position) so Claude
+#     can reason about WHAT THE USER DID.
+#
+#   Stage 2 — Claude (temporal reasoning, single call)
+#     `VIDEO_REASONING_PROMPT_TEMPLATE` reads the ordered frame
+#     descriptions as inline text, reads SLAP_KNOWLEDGE.md /
+#     reference_screens via the Read tool, and emits ONE structured
+#     MediaFinding describing the whole clip (screen_sequence,
+#     action_observed, failure_moment, contradiction detection).
+#
+# Fallback — `VIDEO_PROMPT_TEMPLATE` below: single Claude call that Reads
+# each frame PNG directly. Used when Gemini is unavailable.
+
+VIDEO_FRAME_VISION_PROMPT = """You are looking at one keyframe from a screen recording of a Flipkart SLAP (conversational shopping app) bug. Describe what's visible in THIS frame in plain prose — your description will be combined with descriptions of the OTHER frames, in temporal order, so another agent can reason about what the user does over time.
+
+Cover:
+1. ALL visible text on the screen — labels, buttons, prices, headers, error messages. Quote verbatim where possible.
+2. UI elements visible (input fields, buttons, lists, cards, modals, chat bubbles, video controls) and the state of each (normal, loading, empty, disabled, error).
+3. Interaction state at this moment — tap location if visible, scroll position, gesture in progress, modal/sheet open, keyboard up.
+4. Any visible anomaly — error toast, broken layout, missing content, frozen-looking UI, half-rendered element.
+5. Device / platform hints — status-bar style, system font, navigation pattern. Note any visible OS or app version string.
+
+Reply in plain prose. No JSON, no markdown, no bullet lists — just descriptive sentences focused on THIS frame."""
+
+
+VIDEO_REASONING_PROMPT_TEMPLATE = """You are the SLAP media-processor sub-agent's reasoning stage. A vision model has already described each of the {frame_count} keyframes from a {duration:.1f}-second bug-report video; YOUR job is to reason over the SEQUENCE and emit one structured finding for the whole clip.
+
+You have access via the Read tool to:
+  1. SLAP knowledge document : {knowledge_path}  (READ FIRST — screen catalog, vocabulary, visual triage cues)
+  2. Canonical reference screens : {reference_dir}/   (each filename is a screen label; use Glob to browse if you need to confirm a screen name)
+
+THE BUG REPORT EMAIL THE USER ALSO ATTACHED (verbatim):
+---
+{email_text}
+---
+
+FRAME DESCRIPTIONS — one block per keyframe, in temporal order:
+{frame_descriptions}
+
+Reason about the SEQUENCE — what action does the user take, what screens appear, where is the failure moment (if any), what's the final state? Do NOT return one finding per frame; return ONE JSON object that describes the whole video:
+
+{{
+  "screen":           "<most-prominent SLAP screen, or 'multi-screen flow'>",
+  "state":            "normal | loading | error | empty | unknown",
+  "screen_sequence":  ["screen name at frame 1", "frame 2", ...],
+  "action_observed":  "single-sentence narrative of what the user does in the clip",
+  "failure_moment":   "frame N + description of the failure" or null,
+  "visible_text":     ["literal strings extracted across the frames"],
+  "error_indicators": ["specific error messages or visual error states observed in any frame"],
+  "ui_anomalies":     ["specific things that look wrong, missing, or out of place"],
+  "device_hints":     {{"platform": "Android | iOS | unknown", "os_visible": "..." | null, "app_version_visible": "..." | null}},
+  "triage_signals":   {{"likely_component": "Backend | Backend-Labs | DS | UI | immersive | bugs",
+                       "severity_hint":    "P0 | P1 | P2 | P3",
+                       "contradicts_email_claim": "<see CONTRADICTION DETECTION below>"}},
+  "one_line_summary": "Single sentence — the most useful description of the bug captured in this video."
+}}
+
+CONTRADICTION DETECTION (very important)
+Set `contradicts_email_claim` AGGRESSIVELY when the video does not show what the email describes. Examples:
+  • Email is about "Checkout crash" but the video shows the user browsing the chat home page.
+  • Email claims P0 outage but the video shows the app working normally (no error frames).
+  • Email says Android but video clearly shows iOS, or vice versa.
+
+Set to null only when the video genuinely supports the email. When in doubt, FLAG IT — a missed contradiction wastes engineering time.
+
+OUTPUT FORMAT (STRICT)
+- The very first character of your response MUST be `{` (the opening brace of the JSON object).
+- Do NOT write any prose, analysis, or "Let me reason..." preamble before the JSON.
+- Do NOT wrap the JSON in markdown fences (```json ... ```).
+- Do NOT add any commentary after the closing `}`.
+- Reasoning, if any, belongs INSIDE the `action_observed` / `failure_moment` / `one_line_summary` fields — not outside the object."""
+
+
+# ── Legacy single-Claude-call video prompt (fallback path) ─────────────────
 
 VIDEO_PROMPT_TEMPLATE = """You are the SLAP media-processor sub-agent. You are analysing a BUG-REPORT VIDEO from Flipkart's SLAP conversational shopping app.
 
@@ -554,17 +634,29 @@ Set to null only when the video genuinely supports the email. When in doubt, FLA
 Reply with ONLY the JSON object — no markdown fences, no prose outside it."""
 
 
-def _process_one_video(video_path: str, email_text: str) -> MediaFinding:
+def _process_one_video(
+    video_path:  str,
+    email_text:  str,
+    on_progress: Callable[[str, str], None] = _noop_progress,
+) -> MediaFinding:
     """
-    Pre-process a single video (probe → extract keyframes), then call Claude
-    on the keyframe sequence. Returns one MediaFinding describing the whole
-    video. Frames are extracted into a tempdir whose path is stored on the
-    finding so the UI can display them later.
+    Pre-process a single video (probe → extract keyframes), then run the
+    two-stage Gemini-vision → Claude-reasoning flow over the keyframes.
+    Falls back to a single Claude call (legacy path, frames read via the
+    Read tool) when Gemini is unavailable.
+
+    Returns one MediaFinding describing the whole video. Frames are
+    extracted into a tempdir whose path is stored on the finding so the
+    UI can display them later.
+
+    Calls `on_progress(event, message)` at sub-stage boundaries. Event
+    names are prefixed `video:` so the host's media wrapper turns them
+    into `media:video:vision:start`, `media:video:reasoning:done`, etc.
     """
     video_path = str(Path(video_path).resolve())
     duration   = _probe_video_duration(video_path)
 
-    # Reject videos that exceed the cap — no Claude call wasted, clear UX.
+    # Reject videos that exceed the cap — no LLM call wasted, clear UX.
     if duration > MAX_VIDEO_DURATION_SECONDS:
         return MediaFinding(
             image_path=video_path,
@@ -579,9 +671,9 @@ def _process_one_video(video_path: str, email_text: str) -> MediaFinding:
             triage_signals={"contradicts_email_claim": None},
         )
 
-    # Extract keyframes into a long-lived tempdir (we DON'T context-manage it
-    # because the UI may want to read those PNGs later in the same session).
-    frames_dir = Path(tempfile.mkdtemp(prefix="slap_video_frames_"))
+    # Extract keyframes into a long-lived tempdir (we DON'T context-manage
+    # it — the UI may want to read those PNGs later in the same session).
+    frames_dir  = Path(tempfile.mkdtemp(prefix="slap_video_frames_"))
     frame_paths = _extract_keyframes(video_path, frames_dir, MAX_KEYFRAMES)
 
     if not frame_paths:
@@ -599,9 +691,125 @@ def _process_one_video(video_path: str, email_text: str) -> MediaFinding:
             triage_signals={"contradicts_email_claim": None},
         )
 
-    # Build the prompt with the frames in temporal order.
+    n = len(frame_paths)
+
+    if gemini_configured():
+        on_progress("video:vision:start", f"Gemini vision — describing {n} keyframe(s) in parallel…")
+        t0 = perf_counter()
+        try:
+            descriptions = _gemini_describe_frames_parallel(frame_paths)
+            dt = perf_counter() - t0
+            print(f"  [media] Gemini described {n} keyframe(s) in {dt:.1f}s; handing off to Claude for sequence reasoning.")
+            on_progress("video:vision:done", f"Gemini described {n} keyframe(s) in {dt:.1f}s")
+            return _process_video_gemini_then_claude(
+                video_path, duration, frame_paths, email_text, descriptions, on_progress,
+            )
+        except GeminiUnavailable as e:
+            print(f"  [media] Gemini unavailable ({e}); falling back to Claude video vision.")
+            on_progress("video:vision:fallback", f"Gemini unavailable ({e}) — falling back to Claude video vision")
+
+    on_progress("video:fallback:start", f"Claude vision + reasoning — single pass over {n} keyframe(s)…")
+    t0 = perf_counter()
+    finding = _process_video_claude_only(video_path, duration, frame_paths, frames_dir, email_text)
+    on_progress("video:fallback:done", f"Claude vision + reasoning complete ({perf_counter() - t0:.1f}s)")
+    return finding
+
+
+def _gemini_describe_frames_parallel(frame_paths: list) -> dict:
+    """
+    Describe each video keyframe with Gemini in parallel using the
+    sequence-aware per-frame prompt. Returns {abs_path: description}.
+    Raises GeminiUnavailable on the first failure — we'd rather fall back
+    to the Claude-only path than ship a half-Gemini result.
+    """
+    descriptions: dict = {}
+    workers = min(max(len(frame_paths), 1), 4)
+    paths_str = [str(p) for p in frame_paths]
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        future_to_path = {
+            ex.submit(gemini_describe_image, p, VIDEO_FRAME_VISION_PROMPT): p
+            for p in paths_str
+        }
+        try:
+            for fut in as_completed(future_to_path):
+                path = future_to_path[fut]
+                descriptions[path] = fut.result()
+        except GeminiUnavailable:
+            for f in future_to_path:
+                f.cancel()
+            raise
+    return descriptions
+
+
+def _process_video_gemini_then_claude(
+    video_path:   str,
+    duration:     float,
+    frame_paths:  list,
+    email_text:   str,
+    descriptions: dict,
+    on_progress:  Callable[[str, str], None] = _noop_progress,
+) -> MediaFinding:
+    """
+    Reasoning pass over the per-frame Gemini descriptions. Feeds the
+    descriptions (in temporal order) + SLAP context to Claude and emits
+    one MediaFinding for the whole video.
+    """
+    on_progress(
+        "video:reasoning:start",
+        f"Claude reasoning — analysing {len(frame_paths)}-frame sequence…",
+    )
+    t0 = perf_counter()
+
+    paths_str = [str(p) for p in frame_paths]
+    frame_blocks = "\n\n".join(
+        f"--- Frame {i + 1} of {len(paths_str)} ({Path(p).name}) ---\n{descriptions[p]}"
+        for i, p in enumerate(paths_str)
+    )
+
+    prompt = VIDEO_REASONING_PROMPT_TEMPLATE.format(
+        frame_count        = len(paths_str),
+        duration           = duration,
+        knowledge_path     = str(SLAP_KNOWLEDGE),
+        reference_dir      = str(REFERENCE_SCREENS),
+        email_text         = (email_text or "(no email body provided)").strip(),
+        frame_descriptions = frame_blocks,
+    )
+
+    response = call_claude(
+        prompt,
+        expect_json   = True,
+        # Match the legacy single-Claude video path (360s). The reasoning
+        # prompt carries 8 verbose frame descriptions inline + email body
+        # + SLAP_KNOWLEDGE via Read, so it's at least as token-heavy as
+        # the legacy path that Reads each PNG.
+        timeout       = 360,
+        add_dirs      = [str(SLAP_CONTEXT_DIR)],
+        allowed_tools = ["Read", "Glob"],
+    )
+    if not isinstance(response, dict):
+        raise ValueError(f"Media sub-agent (video reasoning) returned non-object: {type(response).__name__}")
+
+    on_progress(
+        "video:reasoning:done",
+        f"Claude reasoning complete ({perf_counter() - t0:.1f}s)",
+    )
+    return _video_finding_from_response(response, video_path, duration, frame_paths)
+
+
+def _process_video_claude_only(
+    video_path:  str,
+    duration:    float,
+    frame_paths: list,
+    frames_dir:  Path,
+    email_text:  str,
+) -> MediaFinding:
+    """
+    Legacy single-Claude-call video path. Claude reads each keyframe PNG
+    via the Read tool and emits the structured finding directly. Used as
+    the fallback when Gemini is unavailable.
+    """
     frames_listing = "\n".join(
-        f"  Frame {i+1} of {len(frame_paths)}: {p}"
+        f"  Frame {i + 1} of {len(frame_paths)}: {p}"
         for i, p in enumerate(frame_paths)
     )
 
@@ -614,17 +822,26 @@ def _process_one_video(video_path: str, email_text: str) -> MediaFinding:
         email_text     = (email_text or "(no email body provided)").strip(),
     )
 
-    add_dirs = [str(SLAP_CONTEXT_DIR), str(frames_dir)]
     response = call_claude(
         prompt,
-        expect_json=True,
-        timeout=360,
-        add_dirs=add_dirs,
-        allowed_tools=["Read", "Glob"],
+        expect_json   = True,
+        timeout       = 360,
+        add_dirs      = [str(SLAP_CONTEXT_DIR), str(frames_dir)],
+        allowed_tools = ["Read", "Glob"],
     )
     if not isinstance(response, dict):
         raise ValueError(f"Media sub-agent (video) returned non-object: {type(response).__name__}")
 
+    return _video_finding_from_response(response, video_path, duration, frame_paths)
+
+
+def _video_finding_from_response(
+    response:    dict,
+    video_path:  str,
+    duration:    float,
+    frame_paths: list,
+) -> MediaFinding:
+    """Map a Claude response dict (from either video path) to a MediaFinding."""
     return MediaFinding(
         image_path       = video_path,
         screen           = response.get("screen", "unknown"),
@@ -687,9 +904,9 @@ def process_attachments(
             raw_responses.append(image_raw)
 
     for i, vp in enumerate(video_paths, start=1):
-        cb("video:start", f"Video {i}/{len(video_paths)} ({Path(vp).name}) — extracting keyframes + Claude pass…")
+        cb("video:start", f"Video {i}/{len(video_paths)} ({Path(vp).name}) — keyframes + Gemini vision + Claude reasoning…")
         t0 = perf_counter()
-        video_finding = _process_one_video(vp, email_text)
+        video_finding = _process_one_video(vp, email_text, on_progress=cb)
         findings.append(video_finding)
         cb("video:done", f"Video {i}/{len(video_paths)} analysed ({perf_counter() - t0:.1f}s)")
 
