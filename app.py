@@ -57,12 +57,9 @@ DATA_DIR      = Path(__file__).parent / "data"
 # Owner dropdown labelled "Manager" so it's obvious the assignment isn't
 # scoped to a particular team.
 #
-# Extend this set when new managers are identified — purely a display /
-# routing-flexibility override; the underlying team_roster JSON is
-# unchanged so model-side suggestions still use the empirical data.
-MANAGER_NAMES = {
-    "Yatin Grover",
-}
+# The set lives in src/team_config.py so both this UI and the classifier's
+# roster-derivation step read the same source of truth. Extend it there.
+from src.team_config import MANAGER_NAMES
 
 # ── Editable-output config ─────────────────────────────────────────────────
 # These power the override widgets that appear under the metric tiles so a
@@ -455,14 +452,26 @@ st.markdown(
           border-color: #F472B6 !important;
       }
 
-      /* Value text — extra-bold, bigger (26px), tight letter spacing. */
+      /* Value text — bold, sized to fit long owner names by wrapping onto
+         a second line instead of pushing horizontally out of the tile.
+         Short values (P1, DS, "no duplicate found") stay on one line. */
       [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] *:not(svg):not(path) {
-          font-size: 26px !important;
+          font-size: 22px !important;
           font-weight: 800 !important;
           line-height: 1.2 !important;
-          letter-spacing: -0.4px !important;
+          letter-spacing: -0.3px !important;
           height: auto !important;
           overflow: visible !important;
+          white-space: normal !important;
+          word-break: break-word !important;
+          overflow-wrap: anywhere !important;
+          text-align: left !important;
+      }
+      /* Constrain the value cell so wrapped text can't slip past the
+         column's right edge into the next tile (Owner → Duplicate Of). */
+      [data-testid="stHorizontalBlock"]:has(.metric-tile-row-marker) div[data-baseweb="select"] > div {
+          max-width: 100% !important;
+          overflow: hidden !important;
       }
 
       /* Chevron — visible but subtle; pinker on hover for affordance. */

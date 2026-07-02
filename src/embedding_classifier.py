@@ -453,8 +453,10 @@ def build_index(
     # This is the "who's on the team" data Jira doesn't expose directly —
     # we derive it from authoritative assignee history. Filtered to people
     # with at least MIN_ROSTER_BUGS assignments so one-off contributors
-    # don't pollute the routing pool.
+    # don't pollute the routing pool, and with known managers stripped so
+    # the owner sub-agent doesn't suggest them for individual bugs.
     from collections import Counter
+    from .team_config import MANAGER_NAMES
     MIN_ROSTER_BUGS = 2
     roster: dict[str, list] = {}
     for label, assignee in zip(labels, assignees):
@@ -465,7 +467,7 @@ def build_index(
         label: [
             {"name": name, "bug_count": count}
             for name, count in Counter(names).most_common()
-            if count >= MIN_ROSTER_BUGS
+            if count >= MIN_ROSTER_BUGS and name not in MANAGER_NAMES
         ]
         for label, names in roster.items()
     }
