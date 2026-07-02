@@ -657,6 +657,15 @@ st.markdown(
 if "input_version" not in st.session_state:
     st.session_state.input_version = 0
 
+# Bumped on every fresh Triage run. Used to version the Step 2 override
+# widget keys — a new triage produces new keys, which guarantees the
+# widgets re-initialize to the freshly-predicted values instead of
+# sticking on the previous run's overrides. Popping session_state alone
+# isn't enough because a widget that's been rendered once holds its key
+# across the rerun.
+if "triage_version" not in st.session_state:
+    st.session_state.triage_version = 0
+
 
 # ── Cached resources ────────────────────────────────────────────────────────
 
@@ -1282,10 +1291,12 @@ if triage_btn:
         "use_multi_agent": use_multi_agent,
         "pipeline_label":  pipeline_label,
     }
-    # Fresh run — drop stale override selections from a previous bug so the
-    # new prediction shows as the dropdown's default.
-    for k in ("edit_priority", "edit_component", "edit_owner",
-              "edit_owner_choice", "edit_owner_jira_query", "edit_owner_jira_pick",
+    # Fresh run — bump the triage_version so the Step 2 widget keys change
+    # and the tiles re-initialize with the newly-predicted values instead
+    # of keeping the previous run's overrides. Also drop non-versioned
+    # state (approval flags, Jira-search cache) so those don't carry over.
+    st.session_state.triage_version = st.session_state.get("triage_version", 0) + 1
+    for k in ("edit_owner_jira_query", "edit_owner_jira_pick",
               "draft_approved", "btn_approve_draft", "btn_publish_jira"):
         st.session_state.pop(k, None)
 
@@ -1469,7 +1480,7 @@ if "triage_result" in st.session_state:
             "Priority",
             PRIORITY_OPTIONS,
             index=PRIORITY_OPTIONS.index(predicted_prio),
-            key="edit_priority",
+            key=f"edit_priority_v{st.session_state.triage_version}",
             help=f"Model predicted: {predicted_prio} ({severity.severity})",
         )
         st.caption(SEVERITY_FOR_PRIORITY[edited_prio])
@@ -1479,7 +1490,7 @@ if "triage_result" in st.session_state:
             "Component",
             COMPONENT_OPTIONS,
             index=COMPONENT_OPTIONS.index(predicted_comp),
-            key="edit_component",
+            key=f"edit_component_v{st.session_state.triage_version}",
             help=f"Model predicted: {predicted_comp}",
         )
         st.caption(f"Team: {TEAM_FOR_COMPONENT[edited_comp]}")
@@ -1506,22 +1517,26 @@ if "triage_result" in st.session_state:
             team_roster = {}
 
         # Build a flat list of unique engineers, with team annotated.
-        # Managers get a "Manager" team label so they appear cross-team
-        # in the dropdown (any bug can be assigned to them).
         engineer_to_team: dict[str, str] = {}
         for team, members in team_roster.items():
             for m in members:
                 name = m.get("name")
                 if not name or name in engineer_to_team:
                     continue
-                engineer_to_team[name] = "Manager" if name in MANAGER_NAMES else team
+                engineer_to_team[name] = team
+
+        # Add every known manager as a cross-team candidate labelled
+        # "Manager" — the roster JSON excludes them by design, but a human
+        # reviewer should still be able to route a bug to a manager
+        # manually (e.g. for escalation on a P0 where the model didn't
+        # trigger the auto-escalation path).
+        for mgr in MANAGER_NAMES:
+            engineer_to_team[mgr] = "Manager"
 
         # Ensure the model-suggested owner is always selectable even if
         # somehow not in the roster (defensive).
         if predicted_owner and predicted_owner not in engineer_to_team:
-            engineer_to_team[predicted_owner] = (
-                "Manager" if predicted_owner in MANAGER_NAMES else "?"
-            )
+            engineer_to_team[predicted_owner] = "?"
 
         # Sort: managers first (any-team), then alphabetical within each group.
         # Within-group alphabetical sort plays nicely with search-as-you-type.
@@ -1543,7 +1558,7 @@ if "triage_result" in st.session_state:
             "Owner",
             options       = owner_options_with_other,
             index         = default_idx if default_idx is not None else 0,
-            key           = "edit_owner_choice",
+            key           = f"edit_owner_choice_v{st.session_state.triage_version}",
             help          = (
                 f"Model suggested: {predicted_owner or '(none)'}. "
                 f"Type to search the roster ({len(owner_options)} SLAP engineers). "
