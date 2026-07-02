@@ -38,52 +38,46 @@ from ..team_config import MANAGER_NAMES, TEAM_MANAGERS
 class OwnerResult:
     suggested_owner: Optional[str]
     owner_reason:    str
-    method:          str    # "claude" | "frequency-fallback" | "manager-escalation" | "no-candidates"
+    method:          str
+    # Values:
+    #   "claude"                     — Claude picked an engineer with similar-bug history
+    #   "frequency-fallback"         — deterministic pick from engineers with similar-bug history
+    #   "manager-from-similar-bug"   — no engineer in similar bugs; used the manager on the closest bug
+    #   "manager-escalation"         — no similar bugs at all; used TEAM_MANAGERS[component]
+    #   "no-candidates"              — nothing to assign (e.g. DS with no manager mapped)
 
 
-PROMPT_TEMPLATE = """You are the SLAP triage owner-suggestion sub-agent. Pick the single best owner for a new bug, given:
+PROMPT_TEMPLATE = """You are the SLAP triage owner-suggestion sub-agent. Pick the single best owner for a new bug from the ENGINEERS BELOW (all of whom have been assigned similar bugs on this component).
 
 NEW BUG:
   Title:           {title}
   Description:     {description}
   Component:       {component}
 
-TEAM ROSTER for {component} (engineers who have owned bugs on this component, ordered by frequency; managers are excluded from this list):
-{roster}
+CANDIDATE ENGINEERS (each has at least one similar-bug hit on {component} — assignee, count of similar-bug matches):
+{engineer_candidates}
 
-TEAM MANAGER for {component}: {manager}
-(The manager is the ESCALATION target, not the default owner. Pick them only when NO engineer has plausibly worked on this failure mode.)
-
-SIMILAR PAST BUGS (filtered to {component}; assignees marked `[MANAGER]` were managers acting as escalation owners — do NOT treat them as engineer picks):
+SIMILAR PAST BUGS on {component} (for context — includes bugs assigned to managers marked [MANAGER], but you do NOT pick those):
 {similar_bugs}
 
-Selection rule (apply in order):
-1. Prefer engineers (non-managers) who appear as assignees in the similar-bugs list — they've fixed similar bugs before.
-2. If no such engineer stands out, fall back to the team roster for someone whose area of ownership matches the failure mode.
-3. If NO engineer on the roster or in the similar-bug assignees has plausibly worked on this failure mode, return `null` — the system will escalate to the team manager automatically. Do NOT pick a `[MANAGER]` name yourself; managers are only assigned via the automated escalation path.
+Selection rule:
+- Pick the single engineer from CANDIDATE ENGINEERS whose historical bugs most closely match this new bug's failure mode (screen, symptom, feature area — not just keyword overlap).
+- If NO candidate engineer is a plausible match for the failure mode described, return `null` — the system will fall back to a manager automatically.
+- Do NOT pick any name that isn't in CANDIDATE ENGINEERS. Do NOT pick a `[MANAGER]` name. Do NOT invent names.
 
 Reply with ONLY a single JSON object — no markdown fences, no prose:
 
 {{
-  "suggested_owner": "Full Name of an engineer (never a [MANAGER])" or null,
-  "reasoning":       "1-2 sentences explaining the choice. Reference specific similar bugs by key when relevant."
+  "suggested_owner": "Full Name from CANDIDATE ENGINEERS" or null,
+  "reasoning":       "1-2 sentences explaining the choice. Reference specific similar bugs by key."
 }}
 """
-
-
-def _format_roster(team_roster_entries: list) -> str:
-    if not team_roster_entries:
-        return "(no roster available)"
-    return "\n".join(
-        f"  - {m['name']} ({m['bug_count']} bugs on this component)"
-        for m in team_roster_entries[:15]   # cap to keep prompt tight
-    )
 
 
 def _format_similar(similar_bugs: list) -> str:
     """Format the similar-bugs table for the prompt. Assignees who are
     managers get a `[MANAGER]` marker so Claude doesn't treat them as
-    default owners."""
+    default owners — they're for context only in the prompt."""
     if not similar_bugs:
         return "(none — no similar bugs in this component)"
     lines = []
@@ -100,54 +94,62 @@ def _format_similar(similar_bugs: list) -> str:
     return "\n".join(lines)
 
 
-def _pick_ic_via_frequency(
-    same_component_bugs: list,
-    ic_valid_names:      set,
-) -> tuple:
-    """Return (owner, reason) for the most-frequent IC assignee among
-    the component-matching similar bugs, or (None, None) if none of the
-    similar-bug assignees are eligible ICs.
+def _format_engineer_candidates(engineer_counts: dict, engineer_bugs: dict) -> str:
+    """Format the CANDIDATE ENGINEERS block: engineers with at least one
+    similar-bug hit on this component. Each line shows the name, hit
+    count, and the keys of the bugs that back the count."""
+    if not engineer_counts:
+        return "(none — no engineer has similar-bug history on this component)"
+    lines = []
+    for name, count in sorted(engineer_counts.items(), key=lambda kv: -kv[1]):
+        keys = ", ".join(engineer_bugs.get(name, [])[:5])
+        lines.append(f"  - {name} ({count} similar-bug hit(s); e.g. {keys})")
+    return "\n".join(lines)
 
-    Managers are already excluded via `ic_valid_names` — the caller
-    computes that set from the manager-free roster plus non-manager
-    similar-bug assignees.
-    """
-    counts: dict[str, int] = Counter()
-    for s in same_component_bugs:
-        if s.assignee and s.assignee in ic_valid_names:
-            counts[s.assignee] += 1
 
-    if not counts:
-        return None, None
-
-    owner, n = counts.most_common(1)[0]
-    total = sum(counts.values())
-    return owner, (
-        f"Most frequent engineer among the {len(same_component_bugs)} "
-        f"similar bugs on this component ({n}/{total} matches; managers excluded)."
+def _closest_manager_owner(same_component_bugs: list) -> OwnerResult:
+    """No engineer has similar-bug history. If any similar bug on this
+    component was assigned to a manager, pick the manager who was on the
+    single most-similar bug (highest cosine similarity) — that manager
+    is the closest to the failure mode."""
+    manager_bugs = [
+        s for s in same_component_bugs
+        if s.assignee and s.assignee in MANAGER_NAMES
+    ]
+    if not manager_bugs:
+        return None    # caller will fall through to team-manager escalation
+    closest = max(manager_bugs, key=lambda s: s.similarity)
+    return OwnerResult(
+        suggested_owner = closest.assignee,
+        owner_reason    = (
+            f"No engineer has been assigned a similar bug on this component. "
+            f"The closest similar bug ({closest.key}, sim {closest.similarity:.2f}) "
+            f"was owned by manager {closest.assignee} — assigning to them as the "
+            f"most-relevant owner."
+        ),
+        method = "manager-from-similar-bug",
     )
 
 
-def _escalate_to_manager(component: str) -> OwnerResult:
-    """Final fallback per the routing rule: when no engineer on the team
-    has similar-bug history for this failure mode, assign the bug to the
-    team's manager. If the component has no manager mapped (e.g. DS),
-    return `no-candidates` and let the human triage it."""
+def _escalate_to_team_manager(component: str) -> OwnerResult:
+    """No similar bugs at all (or none had assignees). Assign to the
+    team's manager per TEAM_MANAGERS. If the component has no manager
+    mapped (e.g. DS), return `no-candidates` for manual triage."""
     manager = TEAM_MANAGERS.get(component)
     if manager:
         return OwnerResult(
             suggested_owner = manager,
             owner_reason    = (
-                f"No engineer on the {component} team has been assigned a similar bug — "
-                f"escalating to team manager ({manager})."
+                f"No similar bugs exist for {component} — escalating to team "
+                f"manager ({manager})."
             ),
             method = "manager-escalation",
         )
     return OwnerResult(
         suggested_owner = None,
         owner_reason    = (
-            f"No engineer with similar-bug history on {component} and no team "
-            f"manager mapped — manual triage required."
+            f"No similar bugs on {component} and no team manager mapped — "
+            f"manual triage required."
         ),
         method = "no-candidates",
     )
@@ -161,47 +163,67 @@ def suggest_owner(
     team_roster:  dict,            # full roster dict (component → list of {name, bug_count})
 ) -> OwnerResult:
     """
-    Suggest an owner for a new bug on the routed component.
+    Suggest an owner for a new bug on the routed component using a strict
+    "who has actually touched this failure area" rule:
 
-    Selection rule (applied in order):
-      1. Ask Claude to pick from engineers who've been on similar bugs.
-      2. If Claude fails or its pick is invalid (null / manager /
-         hallucinated), fall back to frequency-count of engineer
-         assignees on the component-matching similar bugs.
-      3. If NO engineer has similar-bug history on this component,
-         escalate to the team manager (see TEAM_MANAGERS in team_config).
+      1. If any ENGINEER (non-manager) has been assigned a similar bug
+         on this component, Claude picks the best match among them; on
+         Claude failure, the highest-count engineer wins deterministically.
 
-    The `team_roster` passed in is expected to be manager-free (the
-    classifier's build_index step filters MANAGER_NAMES out during
-    roster derivation). Managers still appear as assignees on similar
-    bugs — we mark them in the prompt so Claude doesn't pick them, and
-    exclude them from the frequency-fallback pool as belt-and-suspenders.
+      2. Otherwise, if only MANAGERS appear in the similar-bug assignees,
+         assign to the manager who owned the SINGLE CLOSEST bug (highest
+         cosine similarity) — they're the person most familiar with this
+         specific failure mode.
+
+      3. Otherwise (no similar bugs, or none had assignees), escalate to
+         the component's team manager per TEAM_MANAGERS.
+
+      4. If the component has no team manager mapped (DS), return
+         `no-candidates` and let the human triage.
+
+    Roster frequency alone is NEVER used to pick an owner — an engineer
+    with 60 general Backend bugs but zero hits on this failure mode is
+    not a better candidate than the manager who actually owned the
+    closest similar bug. `team_roster` is unused in the picking logic
+    today but kept in the signature for a possible future "active
+    engineer" filter (someone might appear in similar-bug assignees
+    but no longer be on the team — the roster is where we'd check).
     """
+    # Suppress the "team_roster unused" hint until we bring active-engineer
+    # filtering back. Keeps the call-site signature stable.
+    _ = team_roster
+
     # 1. Filter similar bugs to those on the routed component.
     same_component = [s for s in similar_bugs if (s.component or "") == component]
 
-    # 2. Pull the (manager-free) roster for this component.
-    roster_entries = team_roster.get(component, []) or []
-    roster_names   = {m["name"] for m in roster_entries}
+    if not same_component:
+        return _escalate_to_team_manager(component)
 
-    # 3. Engineer candidate pool: roster + non-manager similar-bug assignees.
-    ic_valid = roster_names | {
-        s.assignee for s in same_component
-        if s.assignee and s.assignee not in MANAGER_NAMES
-    }
+    # 2. Count similar-bug hits per engineer (managers excluded).
+    engineer_counts: dict = Counter()
+    engineer_bugs:   dict = {}
+    for s in same_component:
+        if s.assignee and s.assignee not in MANAGER_NAMES:
+            engineer_counts[s.assignee] += 1
+            engineer_bugs.setdefault(s.assignee, []).append(s.key)
 
-    # 4. Nothing at all → straight to manager escalation.
-    if not ic_valid and not same_component:
-        return _escalate_to_manager(component)
+    # 3. No engineer in similar-bug assignees → manager-based fallbacks.
+    if not engineer_counts:
+        closest = _closest_manager_owner(same_component)
+        if closest:
+            return closest
+        return _escalate_to_team_manager(component)
 
-    # 5. Try Claude.
+    # 4. At least one engineer has similar-bug history — ask Claude to
+    #    pick the most-relevant one. Constrain the pool via prompt +
+    #    validation so we never accept a name outside the candidate list.
+    candidate_names = set(engineer_counts.keys())
     prompt = PROMPT_TEMPLATE.format(
-        title        = title,
-        description  = description[:1500],
-        component    = component,
-        roster       = _format_roster(roster_entries),
-        manager      = TEAM_MANAGERS.get(component, "(none mapped)"),
-        similar_bugs = _format_similar(same_component),
+        title               = title,
+        description         = description[:1500],
+        component           = component,
+        engineer_candidates = _format_engineer_candidates(engineer_counts, engineer_bugs),
+        similar_bugs        = _format_similar(same_component),
     )
     try:
         response = call_claude(prompt, expect_json=True, timeout=60)
@@ -211,22 +233,22 @@ def suggest_owner(
     if isinstance(response, dict):
         owner     = response.get("suggested_owner")
         reasoning = (response.get("reasoning") or "").strip()
-        if owner and owner in ic_valid and owner not in MANAGER_NAMES:
+        if owner and owner in candidate_names:
             return OwnerResult(
                 suggested_owner = owner,
                 owner_reason    = reasoning or "Suggested by Claude based on similar-bug history.",
                 method          = "claude",
             )
-        # Otherwise (null, manager pick, hallucinated name) → fall through.
+        # Otherwise (null, off-list name, manager pick) → deterministic fallback.
 
-    # 6. Frequency fallback among engineers.
-    owner, reason = _pick_ic_via_frequency(same_component, ic_valid)
-    if owner:
-        return OwnerResult(
-            suggested_owner = owner,
-            owner_reason    = reason,
-            method          = "frequency-fallback",
-        )
-
-    # 7. Nobody has similar-bug history → escalate to team manager.
-    return _escalate_to_manager(component)
+    # 5. Deterministic fallback: highest-count engineer among the candidates.
+    winner, n = engineer_counts.most_common(1)[0]
+    return OwnerResult(
+        suggested_owner = winner,
+        owner_reason    = (
+            f"Highest similar-bug match count on {component} "
+            f"({n} of {sum(engineer_counts.values())} candidate hits); "
+            f"e.g. {', '.join(engineer_bugs[winner][:3])}."
+        ),
+        method = "frequency-fallback",
+    )
