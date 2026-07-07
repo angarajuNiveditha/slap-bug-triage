@@ -581,10 +581,10 @@ Set `contradicts_email_claim` AGGRESSIVELY when the video does not show what the
 Set to null only when the video genuinely supports the email. When in doubt, FLAG IT — a missed contradiction wastes engineering time.
 
 OUTPUT FORMAT (STRICT)
-- The very first character of your response MUST be `{` (the opening brace of the JSON object).
+- The very first character of your response MUST be `{{` (the opening brace of the JSON object).
 - Do NOT write any prose, analysis, or "Let me reason..." preamble before the JSON.
 - Do NOT wrap the JSON in markdown fences (```json ... ```).
-- Do NOT add any commentary after the closing `}`.
+- Do NOT add any commentary after the closing `}}`.
 - Reasoning, if any, belongs INSIDE the `action_observed` / `failure_moment` / `one_line_summary` fields — not outside the object."""
 
 

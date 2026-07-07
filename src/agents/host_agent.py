@@ -298,13 +298,19 @@ class HostAgent:
             f"(conf {classification.confidence:.2f}, {classification.method})"
         )
 
-        # ── Step 3b: similarity (cosine over the embedding index) ──────
-        # Replaces the old Claude-reads-300-bugs in-context ranking. ~7ms
-        # vs ~30-60s, and embeddings are objectively better at similarity
-        # ranking than in-context LLM judgement.
-        emit("similarity:start", "Similarity engine — cosine search over embedding index…")
-        print("  [host] similarity engine (cosine over embeddings)...")
-        sim_result = self.similarity_engine.find_similar(classify_text)
+        # ── Step 3b: similarity (cosine recall + cross-encoder rerank) ──
+        # Two-stage retrieval: cosine picks the top-30 candidates (fast,
+        # high-recall), a cross-encoder rescores those 30 with joint
+        # attention across query + candidate (slower but much more
+        # accurate ranking), and the top-10 are handed to the parallel
+        # dedup/owner/triage block. Falls back to cosine-only if the
+        # cross-encoder can't load (offline first run, etc.).
+        emit(
+            "similarity:start",
+            "Similarity engine — cosine recall + cross-encoder rerank…",
+        )
+        print("  [host] similarity engine (cosine recall → cross-encoder rerank)...")
+        sim_result  = self.similarity_engine.find_similar_with_rerank(classify_text)
         top_matches = sim_result.top_matches
         emit("similarity:done", f"{len(top_matches)} similar bug(s) ranked")
 

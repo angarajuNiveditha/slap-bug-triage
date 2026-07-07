@@ -951,7 +951,11 @@ PIPELINE_RAIL_HTML = """
     <div class="pipe-vnode-icon">S</div>
     <div class="pipe-vnode-text">
       <div class="pipe-vnode-name">Similarity</div>
-      <div class="pipe-vnode-desc">Cosine search ranks the top-5 most similar bugs from historical FLIPPI tickets.</div>
+      <div class="pipe-vnode-desc">Two-stage retrieval over historical FLIPPI tickets.</div>
+      <div class="pipe-vnode-substages">
+        <div class="pipe-vnode-substage"><span><strong>Cosine</strong> <span class="stage-tag">recall</span> — top-30 candidates in ~10&nbsp;ms.</span></div>
+        <div class="pipe-vnode-substage"><span><strong>Cross-encoder</strong> <span class="stage-tag">rerank</span> — resorts to top-10 using joint attention.</span></div>
+      </div>
     </div>
   </div>
 
