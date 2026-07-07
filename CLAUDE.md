@@ -309,8 +309,8 @@ bug input (email OR structured form + optional images / videos)
     │                            title/summary/steps mismatch
     ▼
 [3a] EmbeddingClassifier      — LogReg on 564 labelled bugs → team label
-    │                          + probability distribution. Confidence ≥ 0.50
-    │                          returns immediately (~7 ms). Below 0.50
+    │                          + probability distribution. Confidence ≥ 0.60
+    │                          returns immediately (~7 ms). Below 0.60
     │                          falls back to Claude+skills prompt with the
     │                          top-3 candidate teams' skill files loaded
     │                          from slap_context/architecture/.
@@ -540,7 +540,7 @@ this machine (`which claude` should return a path).
 - `run_agent.py` rule-based simulation harness still fully working (~35 ms/bug).
 - `app.py` Streamlit UI: input-format toggle, pipeline toggle, media uploader,
   editable Priority / Component / Owner widgets with **audit trail**,
-  ambiguity banner when LogReg confidence < 0.50, override →
+  ambiguity banner when LogReg confidence < 0.60, override →
   `corrections.csv` writer for active learning, Step 2 widget keys
   **versioned per triage run** so re-triage always resets tiles to fresh
   predictions instead of carrying over the previous override.
@@ -567,11 +567,15 @@ this machine (`which claude` should return a path).
 
 - **Hybrid LogReg + Claude+skills fallback**. LogReg trained on 564
   component-labelled FLIPPI bugs (mpnet embeddings, `class_weight='balanced'`).
-  Fast path: ~7 ms when top-class prob ≥ 0.50 (about 64% of bugs).
-- Borderline cases (~36%) fall back to Claude with the top-3 candidate
+  Fast path: ~7 ms when top-class prob ≥ **0.60** (approximately 55% of
+  bugs — the threshold was raised from 0.50 → 0.60 to favour accuracy on
+  the "somewhat confident" band at the cost of a small latency increase).
+- Borderline cases (~45%) fall back to Claude with the top-3 candidate
   teams' architecture skill files loaded into the prompt.
-- Measured **69.5% LOO accuracy** on 564 bugs; projected 78–82% after
-  backend label cleanup.
+- Measured **69.5% LOO accuracy** on 564 bugs *(measured at the older
+  0.50 threshold; expect a small uptick at 0.60 that hasn't been re-run
+  through the LOO harness yet)*; projected 78–82% after backend label
+  cleanup.
 - Manager routing exclusion: `MANAGER_NAMES` (Yatin Grover, Veeramreddy
   ChakradharReddy) are stripped from the derived team roster at build
   time — they can't be picked as default owners; they only appear via

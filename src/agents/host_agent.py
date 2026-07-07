@@ -285,7 +285,7 @@ class HostAgent:
 
         # ── Step 3a: component classification (embedding + Claude fallback) ──
         # Replaces the in-prompt component_hint that the parser used to return.
-        # Hybrid: LogReg first (~7ms); Claude only if LogReg confidence < 0.5
+        # Hybrid: LogReg first (~7ms); Claude only if LogReg confidence < 0.60
         # (~6s extra on borderline cases). Override whatever the parser said.
         emit("classify:start", "Component classifier — embedding + LogReg…")
         print("  [host] component classifier (hybrid LogReg/Claude)...")

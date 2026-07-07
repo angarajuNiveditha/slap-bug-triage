@@ -52,8 +52,15 @@ CONFIDENCE_THRESHOLD = 0.40       # below this → route to "bugs" (low confiden
 # to handle the borderline case. In LOO validation Claude (65.1%) and LogReg
 # (66.8%) were within noise; Claude was specifically better on BE_Labs and
 # Backend recall. The fallback captures that benefit without paying Claude's
-# ~6.6s latency on the 80%+ of bugs LogReg is confident about.
-HYBRID_CLAUDE_FALLBACK_THRESHOLD = 0.50
+# ~6.6s latency on the bugs LogReg is confident about.
+#
+# Raised from 0.50 → 0.60 to favour accuracy over speed — more bugs in the
+# 0.50–0.60 "somewhat confident" band now go to Claude+skills instead of
+# taking LogReg's answer. The fast/fallback split at 0.60 hasn't been
+# re-measured against the LOO harness yet; expect roughly 55/45 (from
+# 64/36 at 0.50) as a working guess, with a small overall accuracy bump
+# on the shifted bugs at the cost of ~600ms extra average latency.
+HYBRID_CLAUDE_FALLBACK_THRESHOLD = 0.60
 
 # Architecture skill files — loaded for the top-3 candidate teams when
 # LogReg confidence is borderline. Lets Claude reason over real team

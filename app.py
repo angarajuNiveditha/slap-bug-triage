@@ -943,7 +943,7 @@ PIPELINE_RAIL_HTML = """
     <div class="pipe-vnode-icon">C</div>
     <div class="pipe-vnode-text">
       <div class="pipe-vnode-name">Classifier</div>
-      <div class="pipe-vnode-desc">LogReg on 564 labelled bugs; falls back to Claude+skills when confidence &lt; 0.50.</div>
+      <div class="pipe-vnode-desc">LogReg on 564 labelled bugs; falls back to Claude+skills when confidence &lt; 0.60.</div>
     </div>
   </div>
 
@@ -1427,7 +1427,8 @@ if "triage_result" in st.session_state:
     # Show the full probability distribution when LogReg couldn't commit
     # confidently — same threshold the Claude fallback triggers at, so the
     # user sees the ambiguity whenever the system fell back to Claude.
-    AMBIGUITY_THRESHOLD = 0.50
+    # Kept in sync with HYBRID_CLAUDE_FALLBACK_THRESHOLD in embedding_classifier.py.
+    AMBIGUITY_THRESHOLD = 0.60
 
     if probabilities and clf_confidence < AMBIGUITY_THRESHOLD:
         sorted_probs = sorted(probabilities.items(), key=lambda kv: -kv[1])

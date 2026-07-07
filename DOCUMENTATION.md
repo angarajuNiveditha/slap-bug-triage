@@ -67,7 +67,7 @@ bug input (email OR structured form + optional images / videos)
     │                             refile if title/summary/steps don't match
     ▼
 [3] EmbeddingClassifier      — LogReg over 564-bug embedding index        [local ML]
-    │     ~7ms; if top-class prob < 0.50, falls back to Claude with
+    │     ~7ms; if top-class prob < 0.60, falls back to Claude with
     │     skill files for the top-3 candidate teams                       [Claude+skills]
     ▼
 [4] EmbeddingSimilarityEngine — TWO-STAGE retrieval:                       [local ML + rerank]
@@ -95,7 +95,7 @@ agent_ticket_builder         — assembles Jira ADF + triage_notes JSON
     ▼
 human override (UI)          — reviewer edits Priority / Component / Owner
                               + sees full probability distribution when
-                                LogReg confidence < 0.50
+                                LogReg confidence < 0.60
                               + override goes into corrections.csv for
                                 active learning on the next rebuild
                               + widget keys are versioned per triage run,
@@ -110,7 +110,7 @@ human override (UI)          — reviewer edits Priority / Component / Owner
 | **Media** | `subagent_media.py` | **Gemini vision + Claude reasoning** | Two-stage. Stage A: Gemini describes each image / video keyframe in parallel via `ThreadPoolExecutor` (Flipkart's internal Gemini proxy at `10.83.64.112`, dual auth: subscription key + short-lived JWT). Stage B: Claude reads the descriptions + `slap_context/SLAP_KNOWLEDGE.md` + `reference_screens/` and emits the structured `MediaFinding` (screen, state, triage signals, contradiction detection, `screen_sequence` / `action_observed` / `failure_moment` for videos). Falls back to a single-Claude-call path (Claude reads image PNGs directly) if Gemini is unavailable. |
 | **Parser** | `subagent_parser.py` | Claude | Turns the email body into a structured `BugReport` — title, description, steps, expected/actual, impact, platform, reproducibility, reporter. **No longer outputs `component_hint`** — that's the classifier's job. |
 | **Form consistency** | `subagent_form_consistency.py` | Claude | Only runs when `from_form=True`. Asks Claude whether title/summary/steps describe the same bug. Refile banner if not. |
-| **Component classifier** | `embedding_classifier.py` | LogReg + Claude fallback | Trained on 564 labelled FLIPPI bugs (mpnet embeddings, `class_weight='balanced'`). ~7 ms per prediction. If LogReg's top-class probability ≥ 0.50, returns it directly. Otherwise (~36% of bugs), calls Claude with the top-3 candidate teams' skill files + per-repo skills loaded into context — Claude makes an architecture-grounded final call. Managers (Yatin, Veeramreddy) are filtered from the derived team roster at build time via `MANAGER_NAMES` in `team_config.py`. |
+| **Component classifier** | `embedding_classifier.py` | LogReg + Claude fallback | Trained on 564 labelled FLIPPI bugs (mpnet embeddings, `class_weight='balanced'`). ~7 ms per prediction. If LogReg's top-class probability ≥ 0.60, returns it directly. Otherwise (~45% of bugs), calls Claude with the top-3 candidate teams' skill files + per-repo skills loaded into context — Claude makes an architecture-grounded final call. Threshold was raised from 0.50 → 0.60 to favour accuracy on the "somewhat confident" band. Managers (Yatin, Veeramreddy) are filtered from the derived team roster at build time via `MANAGER_NAMES` in `team_config.py`. |
 | **Similarity engine** | `embedding_similarity.py` | **Cosine recall + cross-encoder rerank** | `find_similar_with_rerank()`: cosine over the 564-bug index picks the top-30 candidates (~200 µs); a lazily-loaded cross-encoder (`ms-marco-MiniLM-L-6-v2`) rescores those 30 pairs with joint attention (~1.2 s CPU); returns the top-10 with sigmoid-normalised scores in `.similarity`. Falls back to plain cosine top-K if the cross-encoder can't load. `is_duplicate_candidate` still tracks raw cosine vs the 0.80 threshold (calibrated for that scale). |
 | **Dedup** | `subagent_dedup.py` | Claude | Focused dup/no-dup over the reranked top-10. Only flags duplicates ≥ 0.80 confidence. |
 | **Owner suggestion** | `subagent_owner.py` | Claude + escalation rules | Strict "similar-bug engineer > closest-similar-bug manager > team manager" rule. (1) If any non-manager engineer appears in same-component similar-bug assignees, Claude picks between them. (2) If only managers appear, the manager on the *closest* similar bug wins. (3) Else `TEAM_MANAGERS[component]` from `team_config.py` (Yatin for UI/BE-Labs/immersive; Veeramreddy for Backend). Frequency-of-roster fallback removed — an engineer needs actual similar-bug history to be a candidate. |
@@ -197,8 +197,8 @@ The keyword-regex approach reached 78.7% on an early 300-bug sample but collapse
 1. Embed bug text with sentence-transformers/all-mpnet-base-v2 (~7ms, local CPU, no API key)
 2. LogisticRegression (class_weight='balanced') over the 564 indexed bug embeddings
 3. Read the top class's predicted probability:
-     • probability >= 0.50  → return it (fast path, no Claude call)
-     • probability < 0.50   → call Claude with the top-3 candidate teams'
+     • probability >= 0.60  → return it (fast path, no Claude call)
+     • probability < 0.60   → call Claude with the top-3 candidate teams'
                               skill files loaded into the prompt, take Claude's verdict
      • probability < 0.40 even after Claude → route to "bugs" (manual)
 ```
@@ -257,7 +257,7 @@ When a reviewer overrides Component in the Streamlit edit widget, the override i
 
 ## 6b. Architecture skill files & repo-context system
 
-When LogReg is confident (≥0.50), the classifier doesn't need any architectural context. But for the ~36% of bugs that fall to the Claude fallback, Claude reads **architecture skill files** describing what each candidate team owns. This is what turns a "65.1% pure Claude" into a "55.0% Claude+skills on the hard subset" — the skills give Claude concrete code/module references to reason against.
+When LogReg is confident (≥0.60), the classifier doesn't need any architectural context. But for the ~45% of bugs that fall to the Claude fallback, Claude reads **architecture skill files** describing what each candidate team owns. This is what turns a "65.1% pure Claude" into a "55.0% Claude+skills on the hard subset" — the skills give Claude concrete code/module references to reason against.
 
 **All skill files were revamped 2026-07-07.** Per-repo files (previously just directory listings) are now derived from **actual code mining** by `build_repo_skills.py` — grepping `*Service.java`, `*Exception.java`, `*Controller/Handler/Endpoint/Resource.java`, `*Dto/Request/Response.java`, `public enum`, `@GetMapping` / `@PostMapping` / `@RequestMapping` routes, and Spring config files. Team-level files were rewritten to cite the real class names from the mined per-repo files rather than inferred prose.
 
