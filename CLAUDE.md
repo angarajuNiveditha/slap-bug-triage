@@ -286,31 +286,54 @@ and signal decided the priority. Useful for debugging and tuning.
 
 ## Multi-agent pipeline (run_multi_agent.py)
 
-A host agent (Astral, `src/agents/host_agent.py`) coordinates five sub-agents.
-Each sub-agent is a focused Claude prompt with one responsibility. The
-host calls them in this order:
+A host agent (Astral, `src/agents/host_agent.py`) coordinates the sub-agents.
+Each Claude sub-agent is a focused prompt with one responsibility; the
+retrieval + classification stages are local ML (not Claude). The host runs
+them in this order:
 
 ```
 bug input (email OR structured form + optional images / videos)
     │
     ▼
-[1] subagent_media           — only if attachments present
-    │     ↳ one-line summary folded into the email body
-    ▼
+[1] subagent_media           — only if attachments present. Two-stage:
+    │                          Gemini vision (per-image / per-keyframe,
+    │                          parallel) → Claude reasoning over descriptions.
+    │                          Falls back to Claude-only if Gemini is
+    │                          unavailable (JWT expired / off-corp).
+    │
+    ▼   media summary folded into the email body
 [2] subagent_parser          — email + media findings → BugReport
     │
     ▼
-[2b] subagent_form_consistency — only if from_form=True
-    │                             refile if title/summary/steps mismatch
+[2b] subagent_form_consistency — only if from_form=True; refile if
+    │                            title/summary/steps mismatch
     ▼
-[3] subagent_embeddings      — 300 historical Jira bugs + new bug → top-K ranked
-    │                          candidates + suggested owner
+[3a] EmbeddingClassifier      — LogReg on 564 labelled bugs → team label
+    │                          + probability distribution. Confidence ≥ 0.50
+    │                          returns immediately (~7 ms). Below 0.50
+    │                          falls back to Claude+skills prompt with the
+    │                          top-3 candidate teams' skill files loaded
+    │                          from slap_context/architecture/.
+    │
     ▼
-[4] subagent_dedup           — focused dup/no-dup decision over the top-K
-    │                          (only fires if confidence ≥ 0.80)
+[3b] EmbeddingSimilarityEngine — two-stage similar-bug retrieval:
+    │                          (i)  cosine top-30 over the embedding index
+    │                               (~200 µs)
+    │                          (ii) cross-encoder rerank of those 30 pairs
+    │                               with ms-marco-MiniLM-L-6-v2 (~1.2s CPU)
+    │                          → top-10 handed to the parallel block.
     ▼
-[5] subagent_triage          — BugReport + similar bugs → SeverityResult
-    │                          3-tier ladder: P0 / P1 / P2
+[4] PARALLEL BLOCK (ThreadPoolExecutor, ~8-12s wall)
+    ├─ subagent_dedup         — duplicate/no-dup call over the top-10
+    │                          (fires only if confidence ≥ 0.80)
+    ├─ subagent_owner         — engineer pick from same-component
+    │                          similar-bug assignees. If no engineer has
+    │                          history → closest-similar-bug manager, else
+    │                          → TEAM_MANAGERS[component] (Yatin for
+    │                          UI/BE-Labs/immersive; Veeramreddy for Backend)
+    └─ subagent_triage        — BugReport + similar bugs → SeverityResult
+                                (3-tier ladder: P0 / P1 / P2)
+    │
     ▼
 agent_ticket_builder         — assembles Jira ADF + triage_notes JSON
     │
@@ -319,24 +342,45 @@ human override (UI)          — reviewer edits Priority / Component / Owner;
                               audit trail recorded in triage_notes.human_overrides
 ```
 
-### Media sub-agent (images)
+### Media sub-agent (images + videos, two-stage)
 
-`src/agents/subagent_media.py`. Loads `slap_context/SLAP_KNOWLEDGE.md` and the
-labeled `slap_context/reference_screens/` PNGs, then calls `claude -p` with
-`--add-dir` so Claude can `Read` each bug attachment as a multimodal input.
-Per image it returns: screen label, state, visible text, UI anomalies,
-device hints, triage signals (likely component + severity hint +
-*contradicts_email_claim*), and a one-line summary.
+`src/agents/subagent_media.py`. Preferred path is **Gemini vision → Claude
+reasoning**:
 
-The combined summary is folded into the email body before the parser runs, so
-every downstream stage sees the visual evidence without handling images itself.
+- **Stage 1 (vision)**: Gemini describes each image (or each of ≤8 ffmpeg-
+  extracted video keyframes) in **parallel** via `ThreadPoolExecutor`. Runs
+  against Flipkart's internal Gemini proxy at `10.83.64.112` with dual auth
+  (`Ocp-Apim-Subscription-Key` + `Authorization: Bearer <GENVOY_TOKEN>`).
+  ~3s wall for images regardless of count; ~14s wall for 8 video keyframes.
+- **Stage 2 (reasoning)**: Claude reads the plain-prose Gemini descriptions
+  plus `slap_context/SLAP_KNOWLEDGE.md` and `slap_context/reference_screens/`
+  via `--add-dir`, and produces the structured `MediaFinding` JSON (screen
+  label, triage signals, contradiction detection, screen_sequence /
+  action_observed / failure_moment for videos).
 
-### Why split embeddings and dedup
+Falls back to a legacy single-Claude-call path (`_process_images_claude_only`
+/ `_process_video_claude_only`) when Gemini is unavailable — Claude reads
+each attachment PNG directly. Contract preserved either way: the host sees
+the same `MediaResult` shape.
 
-The production diagram has them as separate sub-agents. The split makes the
-duplicate decision independently auditable (you can see Claude's dedup
-reasoning in `triage_notes.duplicate_reasoning`) and lets us tune the
-0.80 confidence threshold without touching the ranking step.
+### Why the retrieval + classifier are separate
+
+Classification and retrieval are two different questions over the same
+embedding space. LogReg answers "which team owns this?" (supervised
+prediction using labels). The similarity engine answers "which past bugs
+are most like this one?" (geometric search). Both start from the same
+mpnet embedding of the new bug but branch from there — LogReg goes through
+its trained decision boundary, similarity goes through cosine over the
+764-vector index.
+
+### Why cross-encoder rerank
+
+Bi-encoder cosine (fast, but frozen embeddings never see each other) misses
+paraphrases — e.g. on `bug_01_p0_checkout_crash` (Android "Proceed to Pay"),
+cosine ranked the iOS "continue to payment" bug (FLIPPI-1198) at #2 behind
+a surface-token match to a "Buy Now" crash. The cross-encoder correctly
+promotes FLIPPI-1198 to #1 (score 0.79) because joint attention across
+both texts recognises the two phrases as the same failure moment.
 
 ### How Claude Code headless mode works
 
@@ -484,49 +528,127 @@ this machine (`which claude` should return a path).
 
 ---
 
-## Current status (as of 2026-06-25)
+## Current status (as of 2026-07-07)
 
-- `run_multi_agent.py` fully working end-to-end. The pipeline now mixes Claude
-  (media / parser / form-consistency / dedup / owner / triage) with local ML
-  (embedding classifier + cosine similarity engine). Latency dropped to
-  ~50–90 s per bug.
-- `run_agent.py` rule-based simulation harness still fully working (~35 ms/bug)
+- `run_multi_agent.py` fully working end-to-end. Multi-agent pipeline now
+  mixes: local ML (embedding classifier + cosine + cross-encoder rerank),
+  Gemini vision (via Flipkart's internal proxy), and Claude for the
+  reasoning stages (parser / form-consistency / dedup / owner / triage).
+  Wall-clock latency: ~40–70 s per bug (down from ~90–150 s earlier this
+  quarter) after parallelising dedup+owner+triage and swapping in Gemini
+  for the vision pass.
+- `run_agent.py` rule-based simulation harness still fully working (~35 ms/bug).
 - `app.py` Streamlit UI: input-format toggle, pipeline toggle, media uploader,
-  editable Priority/Component/Owner widgets with audit trail, **ambiguity banner**
-  showing full probability distribution when LogReg confidence < 0.50, and
-  override → `corrections.csv` writer for active learning
-- Triage ladder is 3-tier (P0 / P1 / P2 — no P3). Vague reports → refile.
-- **Component classifier: hybrid LogReg + Claude+skills fallback.**
-  - LogReg trained on 564 component-labelled FLIPPI bugs (sentence-transformer
-    embeddings, class_weight balanced). Fast path: ~7 ms when top-class prob ≥ 0.50.
-  - Borderline cases (35.8%) fall back to Claude with the top-3 candidate
-    teams' architecture skill files loaded as in-context evidence.
-  - Measured **69.5% LOO accuracy** on 564 bugs. Projected 78–82% after
-    backend label cleanup (see audit findings below).
-- **Architecture skill files** at `slap_context/architecture/` — 5 team skills
-  (hand-curated) + 8 of 11 per-repo skills (6 auto-generated from real clones via
-  `build_repo_skills.py`, 2 hand-written by team leads with routing-signals tables)
-- **Backend label-noise audit finding:** ~70% of misclassified Backend bugs
-  are mis-labelled in Jira (chat-AI / relevance complaints filed against Backend
-  that should be DS; visual bugs that should be UI; Social Finds / Q2P bugs that
-  should be BE_Labs). The single highest-leverage improvement is relabelling.
-- **Active learning loop:** UI overrides → `corrections.csv` → next index rebuild.
-- **GitHub Enterprise integration** via `src/repo_context.py` (clone + structural
-  map + `git grep` fallback) — gated on `GITHUB_FK_TOKEN`. 4 SLAP repos cloned locally
-  (edison + dropsense + FaceNet + slap-auto-qc-pipeline + slap-feed branch +
-  social-finds-pipeline branch).
-- Form-consistency sub-agent flags title/summary/steps mismatches when
-  `from_form=True`; multi-agent path uses Claude, rule-based has a conservative
-  word-overlap heuristic fallback
-- `slap_context/SLAP_KNOWLEDGE.md` extracted from the SLAP-2026 Figma file
-  (393 frames, 198 unique screen names, 1117 unique strings)
-- `slap_context/reference_screens/` holds 16 labeled Figma PNGs — gitignored
-  (unreleased design IP); media sub-agent loads them at runtime via `--add-dir`
-- 3 multi-modal test bugs under `data/bug_with_media/` (PNGs gitignored;
-  email.txt files committed)
-- Jira token verified, 300 real FLIPPI bugs fetched successfully
-- 15 text test bugs covering all priority levels and all 6 team components
-- `TRIAGE_LOGIC.md` documents the rule-based logic
-- `CLAUDE_PIPELINE_REPORT.md` documents the Claude pipeline
-- Git repo committed and pushed to GitHub
+  editable Priority / Component / Owner widgets with **audit trail**,
+  ambiguity banner when LogReg confidence < 0.50, override →
+  `corrections.csv` writer for active learning, Step 2 widget keys
+  **versioned per triage run** so re-triage always resets tiles to fresh
+  predictions instead of carrying over the previous override.
+
+### Sub-agent pipeline
+
+- **Media (images + videos)** — two-stage: **Gemini vision → Claude
+  reasoning**. Each image and each of ≤8 video keyframes goes through
+  Gemini in parallel (~3s images, ~14s videos), then a single Claude call
+  reads the descriptions + SLAP knowledge/reference screens and emits the
+  structured `MediaFinding`. Graceful fallback to legacy single-Claude
+  path if Gemini is unavailable (JWT expired, off-corp).
+- **Similar-bug retrieval** — two-stage: cosine top-30 recall (~200 µs)
+  → cross-encoder (`ms-marco-MiniLM-L-6-v2`) rerank of those 30 pairs
+  (~1.2 s CPU) → top-10 to the parallel sub-agent block. Meaningfully
+  sharper top-3 (verified on the checkout-crash test bug: cross-encoder
+  correctly promoted FLIPPI-1198 iOS "continue to payment" from #2 → #1).
+- **Dedup / owner / triage** run **in parallel** via `ThreadPoolExecutor`.
+  Owner sub-agent applies a strict "similar-bug engineer > closest-bug
+  manager > team manager" rule (see [Team-manager escalation](#team-manager-escalation) below).
+- **Triage ladder** is 3-tier (P0 / P1 / P2 — no P3). Vague reports → refile.
+
+### Component classifier
+
+- **Hybrid LogReg + Claude+skills fallback**. LogReg trained on 564
+  component-labelled FLIPPI bugs (mpnet embeddings, `class_weight='balanced'`).
+  Fast path: ~7 ms when top-class prob ≥ 0.50 (about 64% of bugs).
+- Borderline cases (~36%) fall back to Claude with the top-3 candidate
+  teams' architecture skill files loaded into the prompt.
+- Measured **69.5% LOO accuracy** on 564 bugs; projected 78–82% after
+  backend label cleanup.
+- Manager routing exclusion: `MANAGER_NAMES` (Yatin Grover, Veeramreddy
+  ChakradharReddy) are stripped from the derived team roster at build
+  time — they can't be picked as default owners; they only appear via
+  the manager-escalation fallback path or via manual override in the UI.
+
+### Team-manager escalation
+
+Owner sub-agent rule (`src/agents/subagent_owner.py`), in order:
+1. Engineer with same-component similar-bug hits → pick via Claude
+   (or highest-hit engineer deterministically).
+2. Only managers appear in similar-bug assignees → pick the manager
+   who owned the single closest similar bug.
+3. No similar bugs on this component at all → escalate to
+   `TEAM_MANAGERS[component]` (Yatin for UI / Backend-Labs / immersive;
+   Veeramreddy for Backend; DS is intentionally unmapped).
+
+### Architecture skill files (revamped 2026-07-07)
+
+`slap_context/architecture/` now has:
+- **5 team-level files** (`Backend.md`, `UI.md`, `Backend-Labs.md`,
+  `DS.md`, `immersive.md`) — rewritten to cite real class names,
+  services, exceptions, enums from the mined per-repo files, plus real
+  routing signals from the 564-bug corpus. Each is ~140–215 lines.
+  `immersive.md` explicitly notes it's the one team with no cloned
+  repo (routing table inferred from Yatin's Labs org chart).
+- **8 per-repo files** in `slap_context/architecture/repos/`:
+  - `spaghetti.md`, `mozzarella.md` — hand-authored, 255 / 284 lines.
+    Skipped by `build_repo_skills.py` bulk runs (HAND_AUTHORED set).
+  - `edison.md`, `dropsense.md`, `FaceNet.md`, `slap-feed.md`,
+    `social-finds-pipeline.md`, `slap-auto-qc-pipeline.md` — all
+    auto-regenerated by the enhanced miner. Each file now lists per
+    top-level dir: services, HTTP entry points, exceptions, enums,
+    and DTO/Request/Response counts.
+
+The enhanced `build_repo_skills.py` grep-mines Java + Python class-file
+inventories, Spring `@*Mapping` routes, and Spring config files.
+Re-run `python3 build_repo_skills.py` to refresh all six auto-generated
+files after a fresh repo clone.
+
+### Data
+
+- **Backend label-noise audit finding**: ~70% of misclassified Backend
+  bugs are mis-labelled in Jira (chat-AI / relevance complaints filed
+  against Backend that should be DS; visual bugs that should be UI;
+  Social Finds / Q2P bugs that should be BE_Labs). Single
+  highest-leverage improvement is relabelling.
+- **Active learning loop**: UI overrides → `data/corrections.csv` →
+  next `python3 build_embedding_index.py` folds them into the training
+  corpus.
+- **GitHub Enterprise integration** via `src/repo_context.py` (clone +
+  `git grep` fallback) — gated on `GITHUB_FK_TOKEN`. 6 SLAP repos
+  cloned locally under `data/repos/` (edison + dropsense + FaceNet +
+  slap-auto-qc-pipeline + slap-feed branch + social-finds-pipeline
+  branch).
+
+### Assets
+
+- `slap_context/SLAP_KNOWLEDGE.md` — extracted from the SLAP Figma file
+  (393 frames, 198 unique screen names, 1117 unique strings).
+- `slap_context/reference_screens/` — 16 labelled Figma PNGs, committed.
+  Media sub-agent's Claude reasoning stage loads them at runtime via
+  `--add-dir`.
+- `data/bug_with_media/` — 5 multi-modal test bugs (2 with videos,
+  3 with screenshots). PNGs and MP4s gitignored; email.txt files
+  committed.
+- **Test corpus**: 15 text test bugs covering all priority levels and
+  all component labels.
+
+### Documentation
+
+- `CLAUDE.md` (this file) — project context for future Claude sessions.
+- `DOCUMENTATION.md` — mentor-facing runbook and design deep-dive.
+- `TRIAGE_LOGIC.md` — rule-based logic reference.
+- `CLAUDE_PIPELINE_REPORT.md` — earlier Claude pipeline design doc.
+
+### Blocked
+
 - `main.py` (Anthropic SDK pipeline) still blocked on `ANTHROPIC_API_KEY`
+  — `console.anthropic.com` is unreachable on Flipkart corp. Multi-agent
+  path uses the local `claude -p` CLI instead, no key needed.

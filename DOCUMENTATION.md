@@ -52,11 +52,16 @@ The host agent (`src/agents/host_agent.py`, codenamed **Astral**) is a thin coor
 bug input (email OR structured form + optional images / videos)
     │
     ▼
-[1] subagent_media           — only if attachments present                 [Claude]
+[1] subagent_media           — only if attachments present                 [Gemini + Claude]
+    │     Stage A: Gemini vision (per-image OR per-video-keyframe,
+    │              in parallel via ThreadPoolExecutor)
+    │     Stage B: Claude reasoning over the vision descriptions
+    │              (screen mapping, triage signals, contradiction detection)
+    │     Falls back to legacy single-Claude call if Gemini is unreachable.
     │     ↳ one-line summary folded into the email body
     ▼
 [2] subagent_parser          — email + media findings → BugReport          [Claude]
-    │     (no longer decides component — that's step 3)
+    │
     ▼
 [2b] subagent_form_consistency — only if from_form=True                    [Claude]
     │                             refile if title/summary/steps don't match
@@ -65,18 +70,25 @@ bug input (email OR structured form + optional images / videos)
     │     ~7ms; if top-class prob < 0.50, falls back to Claude with
     │     skill files for the top-3 candidate teams                       [Claude+skills]
     ▼
-[4] EmbeddingSimilarityEngine — cosine search returns top-K SimilarBugs   [local ML]
-    │     ~7ms (replaces the old Claude-reads-300-bugs in-context ranking)
+[4] EmbeddingSimilarityEngine — TWO-STAGE retrieval:                       [local ML + rerank]
+    │     • cosine top-30 recall (~200 µs)
+    │     • cross-encoder ms-marco-MiniLM-L-6-v2 rerank of the 30 pairs
+    │       (~1.2 s CPU) → top-10 to the parallel block
     ▼
-[5] subagent_dedup           — focused dup/no-dup decision over top-K     [Claude]
-    │                          (only fires if confidence ≥ 0.80)
-    ▼
-[5b] subagent_owner          — focused owner-suggestion call,             [Claude]
-    │                          constrained to the routed component's
-    │                          team roster (no cross-team bleed)
-    ▼
-[6] subagent_triage          — BugReport + similar bugs → SeverityResult  [Claude]
-    │                          3-tier ladder: P0 / P1 / P2
+[5] PARALLEL BLOCK (ThreadPoolExecutor, ~8-12s wall clock)
+    ├─ subagent_dedup        — dup/no-dup over top-10                     [Claude]
+    │                          (fires only if confidence ≥ 0.80)
+    ├─ subagent_owner        — engineer pick with escalation ladder:      [Claude + rules]
+    │                          1. Engineer with same-component similar-bug
+    │                             history → Claude picks best; else
+    │                          2. Only managers in similar bugs → closest
+    │                             one by cosine sim; else
+    │                          3. TEAM_MANAGERS[component]:
+    │                             • UI, Backend-Labs, immersive → Yatin Grover
+    │                             • Backend → Veeramreddy ChakradharReddy
+    │                             • DS → unmapped (manual triage)
+    └─ subagent_triage       — BugReport + similar bugs → SeverityResult  [Claude]
+                                3-tier ladder: P0 / P1 / P2
     ▼
 agent_ticket_builder         — assembles Jira ADF + triage_notes JSON
     │
@@ -86,19 +98,22 @@ human override (UI)          — reviewer edits Priority / Component / Owner
                                 LogReg confidence < 0.50
                               + override goes into corrections.csv for
                                 active learning on the next rebuild
+                              + widget keys are versioned per triage run,
+                                so re-triaging always resets tiles to
+                                the fresh prediction
 ```
 
 ### Sub-agent / stage responsibilities
 
 | Stage | File | Implementation | What it does |
 |---|---|---|---|
-| **Media** | `subagent_media.py` | Claude | Reads attached images / video keyframes. Identifies the SLAP screen using `slap_context/SLAP_KNOWLEDGE.md` and `reference_screens/`. Extracts visible text, UI anomalies, error indicators, and triage signals (likely component, severity hint, *contradicts_email_claim*). |
+| **Media** | `subagent_media.py` | **Gemini vision + Claude reasoning** | Two-stage. Stage A: Gemini describes each image / video keyframe in parallel via `ThreadPoolExecutor` (Flipkart's internal Gemini proxy at `10.83.64.112`, dual auth: subscription key + short-lived JWT). Stage B: Claude reads the descriptions + `slap_context/SLAP_KNOWLEDGE.md` + `reference_screens/` and emits the structured `MediaFinding` (screen, state, triage signals, contradiction detection, `screen_sequence` / `action_observed` / `failure_moment` for videos). Falls back to a single-Claude-call path (Claude reads image PNGs directly) if Gemini is unavailable. |
 | **Parser** | `subagent_parser.py` | Claude | Turns the email body into a structured `BugReport` — title, description, steps, expected/actual, impact, platform, reproducibility, reporter. **No longer outputs `component_hint`** — that's the classifier's job. |
 | **Form consistency** | `subagent_form_consistency.py` | Claude | Only runs when `from_form=True`. Asks Claude whether title/summary/steps describe the same bug. Refile banner if not. |
-| **Component classifier** | `embedding_classifier.py` | LogReg + Claude fallback | Trained on 564 labelled FLIPPI bugs. ~7 ms per prediction. If LogReg's top-class probability ≥ 0.50, returns it directly. Otherwise (35% of bugs), calls Claude with the top-3 candidate teams' skill files + per-repo skills loaded into context — Claude makes an architecture-grounded final call. |
-| **Similarity engine** | `embedding_similarity.py` | Cosine search | Embeds the bug, cosine-searches the same 564-bug index, returns top-K `SimilarBug` objects (key, summary, similarity, assignee, priority, component, url). Replaces what `subagent_embeddings.py` used to do via Claude reading 300 bugs in-context. ~7 ms per query vs. the old ~30–60s. |
-| **Dedup** | `subagent_dedup.py` | Claude | Focused dup/no-dup over top-K. Only flags duplicates ≥ 0.80 confidence. |
-| **Owner suggestion** | `subagent_owner.py` | Claude | Focused Claude call constrained to the routed component's team roster (derived from historical Jira assignees). Filters similar bugs to component-matching ones, picks the owner who has actually worked on this kind of bug. Falls back to frequency-based pick if Claude is unreachable or returns an off-roster name. |
+| **Component classifier** | `embedding_classifier.py` | LogReg + Claude fallback | Trained on 564 labelled FLIPPI bugs (mpnet embeddings, `class_weight='balanced'`). ~7 ms per prediction. If LogReg's top-class probability ≥ 0.50, returns it directly. Otherwise (~36% of bugs), calls Claude with the top-3 candidate teams' skill files + per-repo skills loaded into context — Claude makes an architecture-grounded final call. Managers (Yatin, Veeramreddy) are filtered from the derived team roster at build time via `MANAGER_NAMES` in `team_config.py`. |
+| **Similarity engine** | `embedding_similarity.py` | **Cosine recall + cross-encoder rerank** | `find_similar_with_rerank()`: cosine over the 564-bug index picks the top-30 candidates (~200 µs); a lazily-loaded cross-encoder (`ms-marco-MiniLM-L-6-v2`) rescores those 30 pairs with joint attention (~1.2 s CPU); returns the top-10 with sigmoid-normalised scores in `.similarity`. Falls back to plain cosine top-K if the cross-encoder can't load. `is_duplicate_candidate` still tracks raw cosine vs the 0.80 threshold (calibrated for that scale). |
+| **Dedup** | `subagent_dedup.py` | Claude | Focused dup/no-dup over the reranked top-10. Only flags duplicates ≥ 0.80 confidence. |
+| **Owner suggestion** | `subagent_owner.py` | Claude + escalation rules | Strict "similar-bug engineer > closest-similar-bug manager > team manager" rule. (1) If any non-manager engineer appears in same-component similar-bug assignees, Claude picks between them. (2) If only managers appear, the manager on the *closest* similar bug wins. (3) Else `TEAM_MANAGERS[component]` from `team_config.py` (Yatin for UI/BE-Labs/immersive; Veeramreddy for Backend). Frequency-of-roster fallback removed — an engineer needs actual similar-bug history to be a candidate. |
 | **Triage** | `subagent_triage.py` | Claude | Priority (P0 / P1 / P2) using similar bugs' priorities as primary signal. Hard overrides: 100% repro crash → P0; Grayskull/secrets/infra → P0. |
 
 ### How Claude headless mode works
@@ -242,37 +257,52 @@ When a reviewer overrides Component in the Streamlit edit widget, the override i
 
 ## 6b. Architecture skill files & repo-context system
 
-When LogReg is confident (≥0.50), the classifier doesn't need any architectural context. But for the 35% of bugs that fall to the Claude fallback, Claude reads **architecture skill files** describing what each candidate team owns. This is what turns a "65.1% pure Claude" into a "55.0% Claude+skills on the hard subset" — the skills give Claude concrete code/module references to reason against.
+When LogReg is confident (≥0.50), the classifier doesn't need any architectural context. But for the ~36% of bugs that fall to the Claude fallback, Claude reads **architecture skill files** describing what each candidate team owns. This is what turns a "65.1% pure Claude" into a "55.0% Claude+skills on the hard subset" — the skills give Claude concrete code/module references to reason against.
+
+**All skill files were revamped 2026-07-07.** Per-repo files (previously just directory listings) are now derived from **actual code mining** by `build_repo_skills.py` — grepping `*Service.java`, `*Exception.java`, `*Controller/Handler/Endpoint/Resource.java`, `*Dto/Request/Response.java`, `public enum`, `@GetMapping` / `@PostMapping` / `@RequestMapping` routes, and Spring config files. Team-level files were rewritten to cite the real class names from the mined per-repo files rather than inferred prose.
 
 ### File layout
 
 ```
 slap_context/architecture/
-├── repos.json                 # repo → team → metadata manifest
-├── UI.md                      # team-level skill: what UI owns, common bug patterns
-├── Backend.md                 # team-level: Edison modules, server-side cache, auth
-├── Backend-Labs.md            # team-level: Styledrops, VTON, Vibes, Social Finds
-├── DS.md                      # team-level: ranking, NPS, model quality, content
-├── immersive.md               # team-level: native AR / VTO SDK
-└── repos/                     # gitignored — auto-generated from real code clones
-    ├── edison.md              # 1704 .java files, module map, recent commits
-    ├── dropsense.md           # Java/Pulsar/Aerospike (manifest said "js" — wrong)
-    ├── FaceNet.md             # Python VTON service
-    ├── slap-feed.md           # branch of edison + feed-adk-poc module
-    ├── social-finds-pipeline.md  # branch of edison, social-finds-master-uat
-    ├── slap-auto-qc-pipeline.md  # Python QC pipeline
-    ├── spaghetti.md           # ~100 RN components + ~80 screens (hand-curated)
-    └── mozzarella.md          # 17 Redux slices, routing-signals table (hand-curated)
+├── repos.json                 # repo → team → metadata manifest (source of truth)
+├── UI.md                      # 148 lines — spaghetti/mozzarella cross-ref + Varun/Hyzam split
+├── Backend.md                 # 214 lines — real class inventories per edison module
+├── Backend-Labs.md            # 147 lines — VTON / Styledrops / Social Finds routing
+├── DS.md                      # 142 lines — 30+ real symptom patterns, Backend↔DS litmus test
+├── immersive.md               # 141 lines — org-chart-derived (no repo cloned yet, honestly caveated)
+└── repos/                     # per-repo skill files
+    ├── edison.md              # 170 lines, mined services + exceptions + enums per module
+    ├── dropsense.md           # 152 lines — 15 services, 23 exceptions, 11 enums listed
+    ├── FaceNet.md             # 123 lines — small Python VTON model service
+    ├── slap-feed.md           # 177 lines — feed-adk-poc + edison-discovery mined
+    ├── social-finds-pipeline.md  # 134 lines
+    ├── slap-auto-qc-pipeline.md  # 78 lines — all 37 QC classes listed
+    ├── spaghetti.md           # 255 lines, hand-authored — ~100 RN components + ~80 screens
+    └── mozzarella.md          # 284 lines, hand-authored — 17 Redux slices, routing table
 ```
 
 Per-repo skills are loaded *alongside* the team-level skill when that team is one of the top-3 candidates. A "UI" candidate bug gets the UI team skill + spaghetti + mozzarella skills bundled into Claude's prompt — typically ~25–37 KB of architectural context.
 
+**How the mining works**: `build_repo_skills.py` walks each repo under `data/repos/` and per top-level directory extracts (via `grep`) the service / exception / entry-point / enum class names. These land in the auto-generated per-repo `.md` files under `slap_context/architecture/repos/`. The team-level files (`Backend.md` etc.) cite those class names directly, so reviewers can grep the real codebase to verify any claim in the skill file. `HAND_AUTHORED = {"spaghetti", "mozzarella"}` in the script means bulk runs skip those two — they're richer than mining alone can produce.
+
 ### Repo coverage
 
-- **8 of 11 manifest repos** currently have skill files
-- 6 are auto-generated by `build_repo_skills.py` from local clones
-- 2 are hand-written (spaghetti, mozzarella) — these include a "Common Bug Routing Signals" table mapping symptoms → exact file paths, which is the highest-value content for the classifier
-- 3 are not yet covered: `edison-gateway`, `cp-service-clients`, `expert-opinion-offline-flow`
+- **8 of 11 manifest repos** currently have skill files committed
+- 6 are auto-generated by `build_repo_skills.py` from local clones (edison, dropsense, FaceNet, slap-feed, social-finds-pipeline, slap-auto-qc-pipeline)
+- 2 are hand-authored (spaghetti, mozzarella) — these include a "Common Bug Routing Signals" table mapping symptoms → exact file paths, which is the highest-value content for the classifier
+- 3 not yet covered: `edison-gateway`, `cp-service-clients`, `expert-opinion-offline-flow` (repos not cloned)
+- Immersive team has no cloned repos → `immersive.md` is honestly caveated as org-chart-inferred
+
+### Refreshing the skill files
+
+```bash
+python3 build_repo_skills.py            # all cloned repos except HAND_AUTHORED
+python3 build_repo_skills.py edison     # just one repo
+python3 build_repo_skills.py spaghetti  # forces regeneration of a HAND_AUTHORED file
+```
+
+The team-level files are hand-maintained; run through the diffs against the newly-mined per-repo output when the code changes materially.
 
 ### Repo cloning (production-prototype mapping)
 
