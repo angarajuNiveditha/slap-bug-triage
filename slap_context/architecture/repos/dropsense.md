@@ -1,6 +1,6 @@
 # `dropsense` — repo skill (auto-generated)
 
-_Last refreshed: 2026-06-25 11:37 UTC_
+_Last refreshed: 2026-07-07 06:30 UTC_
 
 ## At a glance
 
@@ -32,12 +32,47 @@ Source-file counts by extension (top 8):
 - `.java`: 271 files
 - `.sh`: 1 files
 
-## Top-level directories (by source-file count)
+## Module map — top directories with mined symbols
 
-- `src/` — 271 source files
-- `infra/` — 1 source files
-- `charts/` — 0 source files
-- `config/` — 0 source files
+Symbols below are extracted from real class-file names / grep output on the current clone. Each list is capped to keep the skill file readable (limit: 20 per bucket).
+
+### `src/` — 271 source files
+- **Services** (15): `AutoQCService`, `AvatarGenService`, `CatalogueService`, `DailyDropTriggerService`, `DrapingService`, `DynamicPromptService`, `FdpService`, `GcsService`, `GcsStorageService`, `GraySkullService`, `PersonaService`, `PushNotificationService`, `StorageService`, `StyleDropJobService`, `StyleDropOptOutService`
+- **HTTP entry points** (1): `GlobalExceptionHandler`
+- **Exceptions** (23): `AutoQCApiException`, `AutoQCValidationException`, `AvatarGenApiException`, `AvatarGenValidationException`, `AvatarStoreException`, `CatalogueServiceException`, `CircuitBreakerOpenException`, `DrapingApiException`, `DrapingValidationException`, `DropsenseException`, `DynamicPromptApiException`, `DynamicPromptValidationException`, `GcsOperationException`, `GenvoyRateLimitException`, `InvalidRequestException`, `JobNotFoundException`, `NpsApiException`, `PersonaApiException`, `PersonaValidationException`, `PipelineDataNotFoundException` _(+3 more)_
+- **Enums** (11): `AggFragmentType`, `AvatarStatus`, `Gender`, `JobMode`, `NotificationStatus`, `OptOutStatus`, `PipelineStatus`, `PipelineTopic`, `StageStatus`, `StyleDropStatus`, `VTONAggFragmentType`
+- **Data contracts**: 19 DTO / Request / Response classes
+
+### `infra/` — 1 source files
+
+### `charts/` — 0 source files
+
+### `config/` — 0 source files
+
+## HTTP routes (15 @*Mapping annotations found)
+
+| Verb | Path |
+|---|---|
+| `REQUEST` | `/api/v1/health` |
+| `REQUEST` | `/api/v1/styledrops/job` |
+| `POST` | `/dispatch-cohort-tick` |
+| `GET` | `/drapes` |
+| `POST` | `/mark-failed` |
+| `POST` | `/opt-out` |
+| `GET` | `/stuck` |
+| `GET` | `/test/invalid-request` |
+| `GET` | `/test/job-not-found` |
+| `GET` | `/test/raw-image-not-found` |
+| `POST` | `/trigger` |
+| `POST` | `/trigger-daily-drop` |
+| `GET` | `/{jobId}/trace` |
+| `GET` | `/{userId}/daily-drops` |
+| `GET` | `/{userId}/jobs` |
+
+## Config files present (2 Spring/YAML)
+
+- `src/main/resources/application-local.yml`
+- `src/main/resources/application.yml`
 
 ## Recent commits (1 most recent)
 

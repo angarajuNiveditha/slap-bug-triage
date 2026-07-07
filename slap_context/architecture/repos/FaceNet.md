@@ -1,6 +1,6 @@
 # `FaceNet` — repo skill (auto-generated)
 
-_Last refreshed: 2026-06-25 11:37 UTC_
+_Last refreshed: 2026-07-07 06:30 UTC_
 
 ## At a glance
 
@@ -31,12 +31,25 @@ Source-file counts by extension (top 8):
 
 - `.py`: 5 files
 
-## Top-level directories (by source-file count)
+## Module map — top directories with mined symbols
 
-- `prediction_modules/` — 3 source files
-- `tests/` — 2 source files
-- `charts/` — 0 source files
-- `model_resources/` — 0 source files
+Symbols below are extracted from real class-file names / grep output on the current clone. Each list is capped to keep the skill file readable (limit: 20 per bucket).
+
+### `prediction_modules/` — 3 source files
+- **Classes** (3): `FaceEmbedding`, `InputData`, `OutputData`
+
+### `tests/` — 2 source files
+
+### `charts/` — 0 source files
+
+### `model_resources/` — 0 source files
+
+## HTTP routes (2 decorator-defined)
+
+| Verb | Path |
+|---|---|
+| `GET` | `/health` |
+| `POST` | `/predict` |
 
 ## Recent commits (1 most recent)
 

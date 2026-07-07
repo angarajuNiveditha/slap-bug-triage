@@ -7,12 +7,19 @@ a local clone of (under data/repos/<repo>/), extract:
 
   - README.md content (first ~3 KB if present)
   - Top-level directory layout
-  - Detected stack (from build files: package.json, build.gradle, pom.xml,
-    setup.py, pyproject.toml, requirements.txt)
-  - Last N commits on the prod branch (subject + author + date)
-  - Key entry-point files
-  - File extension breakdown (so we know what languages live where)
-  - Source-file count per top-level dir (for routing intuition)
+  - Detected stack (from build files)
+  - Last N commits on the prod branch
+  - File extension breakdown
+  - Source-file count per top-level dir
+  - CODE MINING (added):
+      * Service class names (Java: *Service.java; Python: 'class *Service')
+      * Exception class names — the module's real error taxonomy
+      * HTTP entry-point classes (Controller / Handler / Endpoint / Resource
+        for Java; @app.route / @router.get style decorators for Python)
+      * Enum class names — real status / state vocabulary
+      * DTO / Request / Response class counts — data-contract surface
+      * Spring routes: @GetMapping / @PostMapping / @RequestMapping paths
+      * Config file inventory (application*.yml / .properties)
 
 Write the result to slap_context/architecture/repos/<repo>.md.
 
@@ -21,14 +28,15 @@ hand-curated prose. They get included alongside the team-level skill files
 when the classifier's Claude fallback needs to disambiguate.
 
 Usage:
-    python3 build_repo_skills.py            # process all cloned repos
-    python3 build_repo_skills.py dropsense  # process just one
+    python3 build_repo_skills.py            # process all cloned repos except HAND_AUTHORED
+    python3 build_repo_skills.py dropsense  # process just one (bypasses HAND_AUTHORED)
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -44,9 +52,16 @@ CLONES_DIR     = REPO_ROOT / "data" / "repos"
 MANIFEST       = REPO_ROOT / "slap_context" / "architecture" / "repos.json"
 SKILLS_OUTPUT  = REPO_ROOT / "slap_context" / "architecture" / "repos"
 
-README_MAX_BYTES = 3_500
-TOP_DIRS_LIMIT   = 25
-N_RECENT_COMMITS = 15
+README_MAX_BYTES     = 3_500
+TOP_DIRS_LIMIT       = 25
+N_RECENT_COMMITS     = 15
+SYMBOLS_PER_DIR_LIMIT = 20    # keep the per-dir mined list tight
+
+# Repos with hand-authored skill files that are richer than anything
+# build_repo_skills.py can produce. Bulk-run skips these; passing the
+# name explicitly on the CLI still regenerates them (so you can
+# deliberately overwrite if you want to).
+HAND_AUTHORED = {"spaghetti", "mozzarella"}
 
 # Files that signal which language/build system a repo uses
 BUILD_FILE_SIGNALS = {
@@ -183,6 +198,184 @@ def get_remote_url(repo_path: Path) -> str:
         return ""
 
 
+# ── Code mining ────────────────────────────────────────────────────────────
+#
+# Everything below inspects the actual .java / .py files inside the clone.
+# All functions are best-effort and swallow errors — a repo that has
+# neither Java nor Python still produces a skill file, it just has fewer
+# sections.
+
+
+def _files_by_glob(dpath: Path, patterns: list) -> list:
+    """Union of files matching any of the glob patterns, recursive."""
+    out: set = set()
+    for pat in patterns:
+        for p in dpath.rglob(pat):
+            rel = p.relative_to(dpath)
+            if any(part in IGNORE_DIRS or part.startswith(".") for part in rel.parts):
+                continue
+            out.add(p)
+    return sorted(out)
+
+
+def _grep(patterns: list, path: Path, includes: list, timeout: int = 30) -> str:
+    """Wrapper around system `grep` — much faster than pure-Python rglob+read
+    on big Java trees. Returns stdout as text (empty on any error)."""
+    if not path.exists():
+        return ""
+    cmd = ["grep", "-r", "-h"]
+    for pat in patterns:
+        cmd.extend(["-e", pat])
+    for inc in includes:
+        cmd.append(f"--include={inc}")
+    cmd.append(str(path))
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.stdout
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return ""
+
+
+def extract_java_symbols_per_dir(repo_path: Path, top_dirs: list) -> dict:
+    """For each top-level dir, mine class-name inventories from .java files.
+
+    Returns: {dir_name: {"services":[...], "exceptions":[...], "endpoints":[...],
+                          "enums":[...], "dto_count": N}}
+    """
+    result: dict = {}
+    enum_re = re.compile(r"public\s+enum\s+(\w+)")
+    for d in top_dirs:
+        dpath = repo_path / d
+        if not dpath.exists():
+            continue
+
+        services   = sorted({f.stem for f in _files_by_glob(dpath, ["*Service.java"])})
+        exceptions = sorted({f.stem for f in _files_by_glob(dpath, ["*Exception.java"])})
+        endpoints  = sorted({f.stem for f in _files_by_glob(
+            dpath, ["*Controller.java", "*Handler.java", "*Endpoint.java", "*Resource.java"],
+        )})
+        dtos       = _files_by_glob(dpath, ["*Dto.java", "*DTO.java",
+                                            "*Request.java", "*Response.java"])
+        # Enum names — one grep run for the whole dir
+        enum_names = set()
+        for line in _grep(["public enum "], dpath, ["*.java"]).splitlines():
+            m = enum_re.search(line)
+            if m:
+                enum_names.add(m.group(1))
+
+        # Skip dirs that have literally nothing mineable
+        if not (services or exceptions or endpoints or dtos or enum_names):
+            continue
+
+        result[d] = {
+            "services":   services[:SYMBOLS_PER_DIR_LIMIT],
+            "exceptions": exceptions[:SYMBOLS_PER_DIR_LIMIT],
+            "endpoints":  endpoints[:SYMBOLS_PER_DIR_LIMIT],
+            "enums":      sorted(enum_names)[:SYMBOLS_PER_DIR_LIMIT],
+            "dto_count":  len(dtos),
+            "service_total":   len(services),
+            "exception_total": len(exceptions),
+            "endpoint_total":  len(endpoints),
+            "enum_total":      len(enum_names),
+        }
+    return result
+
+
+def extract_spring_routes(repo_path: Path) -> list:
+    """Grep for @RequestMapping-family annotations and extract (verb, path)."""
+    route_re = re.compile(
+        r'@(GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping)'
+        r'\s*\(\s*(?:value\s*=\s*)?["\']([^"\']+)["\']'
+    )
+    routes: set = set()
+    stdout = _grep(
+        [r"@GetMapping", r"@PostMapping", r"@PutMapping",
+         r"@DeleteMapping", r"@PatchMapping", r"@RequestMapping"],
+        repo_path, ["*.java"], timeout=45,
+    )
+    for line in stdout.splitlines():
+        m = route_re.search(line)
+        if m:
+            verb, path = m.group(1), m.group(2).strip()
+            if path:
+                routes.add((verb.replace("Mapping", "").upper(), path))
+    return sorted(routes, key=lambda t: t[1])
+
+
+def extract_python_symbols_per_dir(repo_path: Path, top_dirs: list) -> dict:
+    """For each top-level dir, mine class names from .py files.
+
+    Returns: {dir_name: {"classes":[...], "exceptions":[...]}}
+    """
+    result: dict = {}
+    class_re     = re.compile(r"^\s*class\s+(\w+)")
+    exception_re = re.compile(r"^\s*class\s+(\w*(?:Exception|Error))\s*[\(:]")
+    for d in top_dirs:
+        dpath = repo_path / d
+        if not dpath.exists():
+            continue
+
+        classes    = set()
+        exceptions = set()
+        stdout = _grep([r"^class "], dpath, ["*.py"])
+        for line in stdout.splitlines():
+            m = class_re.search(line)
+            if m:
+                name = m.group(1)
+                classes.add(name)
+                if exception_re.search(line):
+                    exceptions.add(name)
+
+        if not classes:
+            continue
+
+        # Trim the exception set out of the general classes list so we
+        # don't show the same names twice.
+        classes = classes - exceptions
+
+        result[d] = {
+            "classes":         sorted(classes)[:SYMBOLS_PER_DIR_LIMIT],
+            "exceptions":      sorted(exceptions)[:SYMBOLS_PER_DIR_LIMIT],
+            "class_total":     len(classes),
+            "exception_total": len(exceptions),
+        }
+    return result
+
+
+def extract_python_routes(repo_path: Path) -> list:
+    """Grep for common HTTP-framework decorators (Flask / FastAPI / etc.)
+    and pull out (verb, path) tuples."""
+    route_re = re.compile(
+        r'@\w+\.(route|get|post|put|delete|patch)'
+        r'\s*\(\s*["\']([^"\']+)["\']'
+    )
+    routes: set = set()
+    stdout = _grep([r"@\w\+\.(route\|get\|post\|put\|delete\|patch)"],
+                   repo_path, ["*.py"], timeout=30)
+    for line in stdout.splitlines():
+        m = route_re.search(line)
+        if m:
+            verb = m.group(1).upper()
+            if verb == "ROUTE":
+                verb = "ANY"
+            routes.add((verb, m.group(2).strip()))
+    return sorted(routes, key=lambda t: t[1])
+
+
+def find_config_files(repo_path: Path) -> list:
+    """Locate Spring config files (relative paths only, no content)."""
+    out = []
+    for pattern in ("application.yml", "application.yaml",
+                    "application-*.yml", "application-*.yaml",
+                    "application.properties", "application-*.properties"):
+        for p in repo_path.rglob(pattern):
+            rel = p.relative_to(repo_path)
+            if any(part in IGNORE_DIRS or part.startswith(".") for part in rel.parts):
+                continue
+            out.append(str(rel))
+    return sorted(set(out))
+
+
 def make_skill(repo_meta: dict, repo_path: Path) -> str:
     """Compose the full Markdown skill file for one repo."""
     name = repo_meta["name"]
@@ -248,13 +441,103 @@ def make_skill(repo_meta: dict, repo_path: Path) -> str:
             lines.append(f"- `{ext}`: {n} files")
         lines.append("")
 
-    if dir_file_counts:
-        lines.append("## Top-level directories (by source-file count)\n")
-        for d, n in dir_file_counts[:15]:
-            lines.append(f"- `{d}/` — {n} source files")
+    # Mine class-level symbols from the actual code so the skill file
+    # has something reviewers can grep against, not just directory sizes.
+    java_symbols   = extract_java_symbols_per_dir(repo_path, top_dirs)
+    python_symbols = extract_python_symbols_per_dir(repo_path, top_dirs)
+    spring_routes  = extract_spring_routes(repo_path)
+    python_routes  = extract_python_routes(repo_path)
+    config_files   = find_config_files(repo_path)
+
+    # Precompute a lookup keyed by dir name for the enriched module map.
+    dir_meta = {}
+    for d, n in dir_file_counts[:15]:
+        dir_meta[d] = {"files": n}
+        if d in java_symbols:
+            dir_meta[d]["java"] = java_symbols[d]
+        if d in python_symbols:
+            dir_meta[d]["py"] = python_symbols[d]
+
+    if dir_meta:
+        lines.append("## Module map — top directories with mined symbols\n")
+        lines.append(
+            "Symbols below are extracted from real class-file names / grep "
+            "output on the current clone. Each list is capped to keep the "
+            f"skill file readable (limit: {SYMBOLS_PER_DIR_LIMIT} per bucket)."
+        )
         lines.append("")
+        for d, meta in dir_meta.items():
+            lines.append(f"### `{d}/` — {meta['files']} source files")
+            java = meta.get("java")
+            py   = meta.get("py")
+            if java:
+                if java["services"]:
+                    total = java["service_total"]
+                    shown = ", ".join(f"`{s}`" for s in java["services"])
+                    more  = f" _(+{total - len(java['services'])} more)_" if total > len(java["services"]) else ""
+                    lines.append(f"- **Services** ({total}): {shown}{more}")
+                if java["endpoints"]:
+                    total = java["endpoint_total"]
+                    shown = ", ".join(f"`{s}`" for s in java["endpoints"])
+                    more  = f" _(+{total - len(java['endpoints'])} more)_" if total > len(java["endpoints"]) else ""
+                    lines.append(f"- **HTTP entry points** ({total}): {shown}{more}")
+                if java["exceptions"]:
+                    total = java["exception_total"]
+                    shown = ", ".join(f"`{s}`" for s in java["exceptions"])
+                    more  = f" _(+{total - len(java['exceptions'])} more)_" if total > len(java["exceptions"]) else ""
+                    lines.append(f"- **Exceptions** ({total}): {shown}{more}")
+                if java["enums"]:
+                    total = java["enum_total"]
+                    shown = ", ".join(f"`{s}`" for s in java["enums"])
+                    more  = f" _(+{total - len(java['enums'])} more)_" if total > len(java["enums"]) else ""
+                    lines.append(f"- **Enums** ({total}): {shown}{more}")
+                if java["dto_count"]:
+                    lines.append(f"- **Data contracts**: {java['dto_count']} DTO / Request / Response classes")
+            if py:
+                if py["classes"]:
+                    total = py["class_total"]
+                    shown = ", ".join(f"`{s}`" for s in py["classes"])
+                    more  = f" _(+{total - len(py['classes'])} more)_" if total > len(py["classes"]) else ""
+                    lines.append(f"- **Classes** ({total}): {shown}{more}")
+                if py["exceptions"]:
+                    total = py["exception_total"]
+                    shown = ", ".join(f"`{s}`" for s in py["exceptions"])
+                    more  = f" _(+{total - len(py['exceptions'])} more)_" if total > len(py["exceptions"]) else ""
+                    lines.append(f"- **Exceptions** ({total}): {shown}{more}")
+            lines.append("")
         if len(dir_file_counts) > 15:
-            lines.append(f"_(plus {len(dir_file_counts) - 15} more dirs)_\n")
+            lines.append(f"_(plus {len(dir_file_counts) - 15} smaller dirs not shown)_\n")
+
+    # HTTP routes across the whole repo — surfaces the actual API a service
+    # exposes to callers, which is often the single most useful thing when
+    # trying to understand what a Backend/BE-Labs repo is FOR.
+    if spring_routes:
+        lines.append(f"## HTTP routes ({len(spring_routes)} @*Mapping annotations found)\n")
+        lines.append("| Verb | Path |")
+        lines.append("|---|---|")
+        for verb, path in spring_routes[:40]:
+            lines.append(f"| `{verb}` | `{path}` |")
+        if len(spring_routes) > 40:
+            lines.append(f"| ... | _({len(spring_routes) - 40} more routes not shown)_ |")
+        lines.append("")
+
+    if python_routes:
+        lines.append(f"## HTTP routes ({len(python_routes)} decorator-defined)\n")
+        lines.append("| Verb | Path |")
+        lines.append("|---|---|")
+        for verb, path in python_routes[:40]:
+            lines.append(f"| `{verb}` | `{path}` |")
+        if len(python_routes) > 40:
+            lines.append(f"| ... | _({len(python_routes) - 40} more routes not shown)_ |")
+        lines.append("")
+
+    if config_files:
+        lines.append(f"## Config files present ({len(config_files)} Spring/YAML)\n")
+        for c in config_files[:15]:
+            lines.append(f"- `{c}`")
+        if len(config_files) > 15:
+            lines.append(f"- _(plus {len(config_files) - 15} more)_")
+        lines.append("")
 
     if commits:
         lines.append(f"## Recent commits ({len(commits)} most recent)\n")
@@ -297,13 +580,22 @@ def main() -> None:
         manifest = json.load(f)
     by_name = {r["name"]: r for r in manifest["repos"]}
 
-    if args.repos:
+    explicit_targets = bool(args.repos)
+    if explicit_targets:
         targets = args.repos
     else:
         targets = [d.name for d in CLONES_DIR.iterdir() if d.is_dir()]
 
-    n_done = 0
+    n_done    = 0
+    n_skipped = 0
     for name in targets:
+        # Skip hand-authored repos in bulk mode (spaghetti, mozzarella).
+        # If the caller passed the name explicitly, honour that — this lets
+        # you deliberately overwrite if you want to.
+        if name in HAND_AUTHORED and not explicit_targets:
+            print(f"  ⊘ {name}: hand-authored, skipping (pass explicitly to regenerate)")
+            n_skipped += 1
+            continue
         meta = by_name.get(name)
         if not meta:
             print(f"  ✗ {name}: not in manifest, skipping")

@@ -1,6 +1,6 @@
 # `social-finds-pipeline` — repo skill (auto-generated)
 
-_Last refreshed: 2026-06-25 13:52 UTC_
+_Last refreshed: 2026-07-07 06:30 UTC_
 
 ## At a glance
 
@@ -30,23 +30,91 @@ Source-file counts by extension (top 8):
 - `.java`: 525 files
 - `.sh`: 1 files
 
-## Top-level directories (by source-file count)
+## Module map — top directories with mined symbols
 
-- `product-page/` — 101 source files
-- `edison-discovery/` — 81 source files
-- `catalog/` — 64 source files
-- `edison-common/` — 50 source files
-- `authentication/` — 48 source files
-- `aerospike-client/` — 38 source files
-- `conversation-history/` — 33 source files
-- `social-finds/` — 25 source files
-- `style-drop/` — 22 source files
-- `edison-core/` — 20 source files
-- `expert-review/` — 18 source files
-- `multi-turn/` — 18 source files
-- `prompts-manager/` — 8 source files
-- `charts/` — 0 source files
-- `config/` — 0 source files
+Symbols below are extracted from real class-file names / grep output on the current clone. Each list is capped to keep the skill file readable (limit: 20 per bucket).
+
+### `product-page/` — 101 source files
+- **HTTP entry points** (1): `ProductPageResource`
+- **Exceptions** (2): `ComponentException`, `ProductPageException`
+- **Enums** (11): `Currency`, `DynamicSectionType`, `DynamicTaskStatus`, `ErrorCode`, `MarketPlace`, `MediaType`, `ProductSpecificationType`, `SentimentType`, `VariantStatus`, `VarientType`, `VarientViewType`
+- **Data contracts**: 8 DTO / Request / Response classes
+
+### `edison-discovery/` — 81 source files
+- **Services** (3): `MoodboardService`, `ResponseFrameService`, `SaqService`
+- **HTTP entry points** (4): `AgentHandler`, `DriveConversationHandler`, `FindProductsHandler`, `MoodBoardResource`
+- **Enums** (5): `AgentType`, `AppdataKey`, `MessageType`, `QueryIntentTypeStatus`, `StreamingStatus`
+- **Data contracts**: 19 DTO / Request / Response classes
+
+### `catalog/` — 64 source files
+- **Services** (8): `DocumentService`, `OfflineDataLoaderService`, `OfflineLoaderExecutorService`, `PricingService`, `ProductDetailService`, `UserReviewService`, `VariantService`, `VariantsPivotService`
+- **HTTP entry points** (2): `OfflineDataLoaderResource`, `ProductInfoResource`
+- **Exceptions** (1): `CatalogException`
+- **Enums** (5): `ContentType`, `ErrorCode`, `ImageType`, `VariantStatus`, `ViewType`
+- **Data contracts**: 4 DTO / Request / Response classes
+
+### `edison-common/` — 50 source files
+- **Services** (1): `EdisonConfigService`
+- **Exceptions** (3): `EdisonBotException`, `EdisonClientException`, `TokenServiceException`
+- **Enums** (5): `EdisonConfigBucketKey`, `EdisonModules`, `Environment`, `ErrorCode`, `UseCase`
+
+### `authentication/` — 48 source files
+- **Services** (2): `AuthenticationService`, `KevlarTokenService`
+- **HTTP entry points** (1): `AuthenticationResource`
+- **Exceptions** (1): `AuthenticationException`
+- **Enums** (6): `AgeGroup`, `AuthVerificationType`, `ErrorCode`, `ErrorType`, `Gender`, `StatusType`
+- **Data contracts**: 11 DTO / Request / Response classes
+
+### `aerospike-client/` — 38 source files
+- **Services** (1): `AerospikePolicyService`
+- **HTTP entry points** (7): `BatchDeleteSuccessHandler`, `BatchFailureHandler`, `DeleteSuccessHandler`, `ExistsSuccessHandler`, `FailureHandler`, `RecordSuccessHandler`, `WriteSuccessHandler`
+- **Exceptions** (1): `AerospikeClientException`
+- **Enums** (1): `ErrorCode`
+- **Data contracts**: 7 DTO / Request / Response classes
+
+### `conversation-history/` — 33 source files
+- **Services** (2): `ConversationHistoryService`, `ConversationSummaryService`
+- **HTTP entry points** (1): `ConversationHistoryResource`
+- **Exceptions** (1): `ConversationHistoryException`
+- **Enums** (2): `ConversationSummaryStrategy`, `ErrorCode`
+- **Data contracts**: 3 DTO / Request / Response classes
+
+### `social-finds/` — 25 source files
+- **Services** (3): `SlapUserSocialsService`, `SocialFindService`, `UserSocialFindService`
+- **HTTP entry points** (2): `HealthCheckResource`, `SocialFindsResource`
+- **Exceptions** (1): `SocialFindException`
+- **Enums** (2): `ErrorCode`, `MediaType`
+- **Data contracts**: 1 DTO / Request / Response classes
+
+### `style-drop/` — 22 source files
+- **Services** (2): `GCSService`, `StyleDropService`
+- **HTTP entry points** (1): `StyleDropResource`
+- **Enums** (2): `Gender`, `ImageType`
+- **Data contracts**: 5 DTO / Request / Response classes
+
+### `edison-core/` — 20 source files
+- **Services** (1): `EdisonService`
+- **HTTP entry points** (3): `HealthCheckResource`, `LandingPageResource`, `PingResource`
+- **Data contracts**: 4 DTO / Request / Response classes
+
+### `expert-review/` — 18 source files
+- **Services** (1): `ExpertReviewService`
+- **HTTP entry points** (2): `ExpertReviewResource`, `HealthCheckResource`
+- **Exceptions** (1): `ExpertReviewException`
+- **Enums** (3): `ErrorCode`, `MediaType`, `Sentiment`
+- **Data contracts**: 2 DTO / Request / Response classes
+
+### `multi-turn/` — 18 source files
+- **Exceptions** (1): `MultiTurnException`
+- **Enums** (1): `ErrorCode`
+
+### `prompts-manager/` — 8 source files
+- **Exceptions** (1): `PromptsManagerException`
+- **Enums** (1): `PromptId`
+
+### `charts/` — 0 source files
+
+### `config/` — 0 source files
 
 ## Recent commits (1 most recent)
 

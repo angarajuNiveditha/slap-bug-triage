@@ -1,6 +1,6 @@
 # `slap-auto-qc-pipeline` — repo skill (auto-generated)
 
-_Last refreshed: 2026-06-25 11:37 UTC_
+_Last refreshed: 2026-07-07 06:30 UTC_
 
 ## At a glance
 
@@ -32,12 +32,35 @@ Source-file counts by extension (top 8):
 - `.py`: 52 files
 - `.sh`: 1 files
 
-## Top-level directories (by source-file count)
+## Module map — top directories with mined symbols
 
-- `app/` — 34 source files
-- `tests/` — 14 source files
-- `scripts/` — 3 source files
-- `charts/` — 0 source files
+Symbols below are extracted from real class-file names / grep output on the current clone. Each list is capped to keep the skill file readable (limit: 20 per bucket).
+
+### `app/` — 34 source files
+- **Classes** (37): `AutoQC`, `AutoQCPipeline`, `ComprehensiveQCResponse`, `ComprehensiveQCResult`, `ComprehensiveQCService`, `ConfigSvcClient`, `Edison`, `FaceNetRequest`, `FaceNetResponse`, `FaceNetService`, `ImageDownloadUtils`, `ImageProcessingUtils`, `ImageQCDetails`, `ManualQC`, `MetricsMiddleware`, `ModelConfig`, `NSFWResult`, `ODResults`, `OWLViTRequest`, `OWLViTResponse` _(+17 more)_
+- **Exceptions** (7): `FaceDetectionException`, `FaceSimilarityException`, `ImageProcessingException`, `NSFWException`, `QCException`, `ServiceException`, `URLException`
+
+### `tests/` — 14 source files
+- **Classes** (17): `DummyService`, `TestComprehensiveQCService`, `TestFaceNetController`, `TestFaceNetService`, `TestGCPAuthUtil`, `TestHealthController`, `TestImageDownloadUtils`, `TestImageProcessingUtils`, `TestModuleLevel`, `TestModuleLevelInstance`, `TestOWLViTController`, `TestOWLViTService`, `TestProcessQCRequest`, `TestQCFailureType`, `TestQCOrchestrator`, `TestUtilityFunctions`, `_DummySafeSearchService`
+- **Exceptions** (7): `TestFaceDetectionException`, `TestFaceSimilarityException`, `TestImageProcessingException`, `TestNSFWException`, `TestQCException`, `TestServiceException`, `TestURLException`
+
+### `scripts/` — 3 source files
+- **Classes** (1): `ExportConfig`
+
+### `charts/` — 0 source files
+
+## HTTP routes (8 decorator-defined)
+
+| Verb | Path |
+|---|---|
+| `GET` | `/` |
+| `POST` | `/compare` |
+| `POST` | `/comprehensive-check` |
+| `POST` | `/detect` |
+| `GET` | `/facenet/health` |
+| `GET` | `/owl-vit/health` |
+| `POST` | `/predict` |
+| `GET` | `/qc/health` |
 
 ## Recent commits (1 most recent)
 
