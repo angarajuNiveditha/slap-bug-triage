@@ -184,30 +184,53 @@ def suggest_owner(
     Roster frequency alone is NEVER used to pick an owner — an engineer
     with 60 general Backend bugs but zero hits on this failure mode is
     not a better candidate than the manager who actually owned the
-    closest similar bug. `team_roster` is unused in the picking logic
-    today but kept in the signature for a possible future "active
-    engineer" filter (someone might appear in similar-bug assignees
-    but no longer be on the team — the roster is where we'd check).
+    closest similar bug. But we DO enforce roster membership: an
+    assignee who happens to appear once on a same-component similar bug
+    but whose actual team is different (per the derived roster in
+    `team_roster[component]`) is NOT a valid candidate. Historical
+    one-off cross-team contributions shouldn't drive routing.
     """
-    # Suppress the "team_roster unused" hint until we bring active-engineer
-    # filtering back. Keeps the call-site signature stable.
-    _ = team_roster
-
     # 1. Filter similar bugs to those on the routed component.
     same_component = [s for s in similar_bugs if (s.component or "") == component]
 
     if not same_component:
         return _escalate_to_team_manager(component)
 
-    # 2. Count similar-bug hits per engineer (managers excluded).
-    engineer_counts: dict = Counter()
-    engineer_bugs:   dict = {}
-    for s in same_component:
-        if s.assignee and s.assignee not in MANAGER_NAMES:
-            engineer_counts[s.assignee] += 1
-            engineer_bugs.setdefault(s.assignee, []).append(s.key)
+    # 1b. Compute the current-roster name set for this component. Used
+    #     to filter out cross-team assignees in step 2.
+    roster_names = {
+        m["name"] for m in (team_roster.get(component) or [])
+        if m.get("name")
+    }
 
-    # 3. No engineer in similar-bug assignees → manager-based fallbacks.
+    # 2. Count similar-bug hits per engineer (managers excluded), and
+    #    ENFORCE roster membership on the routed component. Historical
+    #    assignees who happen to have touched a same-component bug once
+    #    but whose actual team is different (e.g. a UI engineer who took
+    #    one Backend ticket during a rotation) must NOT get suggested as
+    #    the primary owner for that component — that's the whole point
+    #    of the classifier + roster split.
+    #
+    #    Without this filter, e.g. Kalpana lnm (30 UI bugs, 1 stray
+    #    Backend assignment on FLIPPI-866) was being surfaced as the
+    #    top candidate for a Backend-routed bug.
+    engineer_counts: Counter = Counter()
+    engineer_bugs:   dict    = {}
+    for s in same_component:
+        if not s.assignee or s.assignee in MANAGER_NAMES:
+            continue
+        if s.assignee not in roster_names:
+            # Same-component bug but assignee isn't on this team's
+            # roster — skip. They may have been a one-off assignment.
+            continue
+        engineer_counts[s.assignee] += 1
+        engineer_bugs.setdefault(s.assignee, []).append(s.key)
+
+    # 3. No ROSTER engineer in similar-bug assignees → manager-based
+    #    fallbacks. Off-roster same-component assignees exist (see
+    #    off_roster_seen) but they're on other teams — escalating is
+    #    correct because no engineer on THIS team has touched this
+    #    failure area.
     if not engineer_counts:
         closest = _closest_manager_owner(same_component)
         if closest:
