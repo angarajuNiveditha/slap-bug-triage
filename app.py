@@ -1396,20 +1396,17 @@ with col_main:
                 key=f"form_platform_{st.session_state.input_version}",
             )
         with col_reporter:
-            # Textarea instead of text_input so browsers don't offer
-            # form-history suggestions from previously-typed Summary / Title
-            # content. Height 68 (Streamlit minimum) renders as a single
-            # visual line with the same feel as a regular input.
-            form_reporter = st.text_area(
+            # Single-line input to visually match the Platform selectbox to
+            # its left. Form-history / autofill is blocked by the JS layer
+            # near the top of app.py that randomises `name` attributes and
+            # sets autocomplete="off" on every input in the parent DOM.
+            form_reporter = st.text_input(
                 "Reporter",
-                placeholder="e.g. Rahul Verma <rahul.verma@flipkart.com>",
+                placeholder="e.g. Rahul Verma",
                 key=f"form_reporter_{st.session_state.input_version}",
-                height=68,
-                help="Who is filing this bug. Stored on the ticket in the dashboard.",
+                help="Name of the person filing this bug.",
             )
-            # Strip any newlines the user pastes so downstream parsing sees
-            # a single-line reporter value.
-            form_reporter = (form_reporter or "").replace("\n", " ").strip()
+            form_reporter = (form_reporter or "").strip()
 
         form_summary = st.text_area(
             "Summary",
