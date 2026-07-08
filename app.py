@@ -15,11 +15,13 @@ Run:
 
 from __future__ import annotations
 
+import base64
 import html
 import json
 import os
 import re
 import tempfile
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -686,6 +688,88 @@ def get_engines() -> tuple[RuleEngine, HostAgent, int]:
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
+def genvoy_token_status() -> dict:
+    """Check the GENVOY_TOKEN JWT expiry status for the sidebar banner.
+
+    The Gemini media path (Flipkart internal proxy) needs a live JWT
+    bearer that expires ~hourly. When it's expired or missing the
+    pipeline still works — the media sub-agent falls back to the
+    single-Claude-call vision path — but latency degrades noticeably
+    (~15 s per image, ~140 s per 8-frame video, vs ~3s / ~14s with
+    Gemini). The banner just makes that degradation visible so a
+    reviewer isn't surprised by slow runs.
+
+    Returns:
+      {status: "ok" | "expiring_soon" | "expired" | "missing" | "malformed",
+       minutes_remaining: float,
+       message: str}
+    """
+    token = os.environ.get("GENVOY_TOKEN", "").strip()
+    if not token:
+        return {
+            "status":            "missing",
+            "minutes_remaining": 0.0,
+            "message": (
+                "GENVOY_TOKEN is not set in .env — Gemini vision is unavailable. "
+                "The media sub-agent will fall back to Claude-only (slower per "
+                "image, no per-frame parallelism on videos)."
+            ),
+        }
+
+    parts = token.split(".")
+    if len(parts) != 3:
+        return {
+            "status":            "malformed",
+            "minutes_remaining": 0.0,
+            "message": (
+                "GENVOY_TOKEN doesn't look like a JWT (needs 3 dot-separated "
+                "segments). Media pipeline degraded to Claude-only."
+            ),
+        }
+
+    try:
+        payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+        exp = float(claims.get("exp", 0))
+    except Exception:
+        return {
+            "status":            "malformed",
+            "minutes_remaining": 0.0,
+            "message": (
+                "Could not decode GENVOY_TOKEN payload. Media pipeline degraded "
+                "to Claude-only."
+            ),
+        }
+
+    remaining_min = (exp - time.time()) / 60.0
+
+    if remaining_min <= 0:
+        return {
+            "status":            "expired",
+            "minutes_remaining": remaining_min,
+            "message": (
+                f"GENVOY_TOKEN expired {abs(remaining_min):.0f} min ago. "
+                f"Media pipeline is DEGRADED to Claude-only vision (~15s per "
+                f"image, ~140s per 8-frame video). Refresh the JWT in .env to "
+                f"restore Gemini."
+            ),
+        }
+    if remaining_min < 5:
+        return {
+            "status":            "expiring_soon",
+            "minutes_remaining": remaining_min,
+            "message": (
+                f"GENVOY_TOKEN expires in {remaining_min:.1f} min. Refresh soon "
+                f"to avoid falling back to Claude-only mid-run."
+            ),
+        }
+    return {
+        "status":            "ok",
+        "minutes_remaining": remaining_min,
+        "message":           "",
+    }
+
+
 def jira_link(key: Optional[str]) -> str:
     if not key:
         return "—"
@@ -901,6 +985,18 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+
+# ── Gemini token-expiry banner (silent when token is healthy) ──────────────
+# The Gemini media path uses a hourly-expiring JWT (GENVOY_TOKEN). When
+# it lapses the pipeline still works — it falls back to Claude-only
+# vision — but the reviewer might not notice they're getting slower /
+# lower-quality media analysis. Show a banner when action is needed.
+_token_status = genvoy_token_status()
+if _token_status["status"] in ("expired", "missing", "malformed"):
+    st.error(f":no_entry:  {_token_status['message']}", icon="🛑")
+elif _token_status["status"] == "expiring_soon":
+    st.warning(_token_status["message"], icon="⏳")
 
 
 # ── Body: left rail (pipeline) + main column (input) ───────────────────────
