@@ -28,7 +28,12 @@ from typing import Optional
 import streamlit as st
 from dotenv import load_dotenv
 
-load_dotenv()
+# override=True so that when the user edits .env mid-session (typically to
+# refresh the hourly-expiring GENVOY_TOKEN), Streamlit's next script rerun
+# actually picks up the new value. Default python-dotenv behaviour is to
+# skip env vars that are already set in the process, which meant a stale
+# token would stick around until Streamlit was killed and restarted.
+load_dotenv(override=True)
 
 # ── Pipeline imports ────────────────────────────────────────────────────────
 from src.agent_ticket_builder import build_ticket
