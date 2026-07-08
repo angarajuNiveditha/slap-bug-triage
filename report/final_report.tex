@@ -792,6 +792,54 @@ downstream code (dedup / owner) can compare them monotonically. The
 tracks the raw cosine value, because the 0.80 duplicate threshold is
 calibrated for the cosine scale.
 
+\subsection{Relevance gate: don't reason over noise}\label{sec:relevance-gate}
+
+Sometimes the corpus genuinely has nothing similar to a new bug. When
+that happens the cross-encoder produces a top-10 with sigmoid scores in
+the 0.01--0.03 band --- i.e.\ raw scores around $-4$, which is the
+model saying ``these are confidently not related.'' If we still hand
+that list to owner and triage, they end up reasoning over unrelated
+bugs: owner picks from assignees who worked on irrelevant tickets,
+triage averages priorities of irrelevant tickets.
+
+To stop that, the retrieval carries a low-confidence flag:
+
+\begin{lstlisting}[language=python]
+RELEVANCE_THRESHOLD = 0.10   # sigmoid-normalised CE score
+
+@dataclass
+class EmbeddingSimilarityResult:
+    top_matches:         list       # always returned to the UI
+    top_relevance_score: float      # max .similarity across top_matches
+    is_low_confidence:   bool       # top_relevance_score < RELEVANCE_THRESHOLD
+\end{lstlisting}
+
+When \texttt{is\_low\_confidence} is true, the host passes an
+\emph{empty} list to the parallel block instead of \texttt{top\_matches}.
+Each downstream sub-agent already handles the empty case gracefully:
+
+\begin{itemize}[leftmargin=1.4em,nosep]
+\item \textbf{Dedup}: returns ``no duplicate'' trivially.
+\item \textbf{Owner}: \texttt{same\_component} is empty $\rightarrow$
+      cascades to \texttt{\_escalate\_to\_team\_manager(component)}.
+\item \textbf{Triage}: sees an empty ``similar bugs'' block in the prompt
+      and reasons from the bug text alone (the priority ladder + hard
+      overrides in \texttt{subagent\_triage.py} still apply).
+\end{itemize}
+
+The full top-10 is still stored on the draft so the UI can show it to
+the reviewer for context, with a warning banner above the table
+explaining \emph{why} the downstream picks look like escalations.
+
+\begin{decisionbox}[Threshold value 0.10, chosen for the calibration property, not empirically tuned]
+$\text{sigmoid}(-2.2) \approx 0.10$. Below that, the raw cross-encoder
+score is meaningfully negative --- the model is leaning ``not
+related.'' Good matches typically score $0.6+$; loosely-related bugs
+in the $0.20$--$0.40$ band; the $<0.10$ zone is where the model is
+confidently ``not similar.'' If the demo turns up cases where this
+feels too conservative, the constant is one line to change.
+\end{decisionbox}
+
 \newpage
 
 % ────────────────────────── SECTION: DEDUP / OWNER / TRIAGE ──────────────────────────
@@ -830,13 +878,20 @@ the most frequent assignee for this component.'' That rule fails because:
 \item Engineers with lots of bugs on the \emph{component} but zero bugs on
       the \emph{specific failure area} would still win, which produces
       obviously-wrong picks.
+\item Engineers whose primary team is different but who touched a single
+      same-component bug during a rotation would surface as candidates too.
+      (Real case: Kalpana lnm has 30 UI-labelled bugs and 1 stray
+      Backend-labelled assignment. For a Backend-routed bug she was being
+      suggested over Divya Chhibber, an actual Backend engineer.)
 \end{itemize}
 
 The rule I settled on, in order:
 
 \begin{enumerate}[leftmargin=1.4em,nosep]
 \item If any \emph{engineer} (non-manager) has been assigned a similar bug
-      on this component $\rightarrow$ Claude picks between them.
+      on this component \emph{AND is in the component's current roster}
+      $\rightarrow$ Claude picks between them. The roster-membership check
+      is what stops the Kalpana-type case.
 \item If only \emph{managers} appear in the similar-bug assignees $\rightarrow$
       pick the manager who was on the single \emph{closest} similar bug
       (highest cross-encoder score).
@@ -851,6 +906,13 @@ The rule I settled on, in order:
       \end{itemize}
 \end{enumerate}
 
+The team roster itself comes from \texttt{data/embedding\_index\_team\_roster.json},
+which is derived at index-build time from historical Jira assignees, filtered
+to people with at least 2 bugs per component, and with \texttt{MANAGER\_NAMES}
+stripped out. So a candidate for a Backend-routed bug is (a) non-manager AND
+(b) has $\geq 2$ Backend bugs in history AND (c) shows up in the similar-bug
+list for this specific bug. All three filters have to pass.
+
 \begin{decisionbox}[Manager mapping is a one-line-of-config source of truth]
 \texttt{src/team\_config.py} defines both \texttt{MANAGER\_NAMES} (excluded
 from the derived roster during index build) and \texttt{TEAM\_MANAGERS}
@@ -860,6 +922,17 @@ from the derived roster during index build) and \texttt{TEAM\_MANAGERS}
 \texttt{subagent\_owner.py} (escalation), so there's one source of truth
 and no drift.
 \end{decisionbox}
+
+\begin{gotchabox}[Regression that took two commits to notice]
+The roster-membership filter existed in the very first version of the
+owner sub-agent (June commit \texttt{653f2cb}). A later refactor that
+added the manager-escalation ladder (\texttt{251c878}) inadvertently
+changed a set-intersection to a set-union and silently broke the
+filter --- I noticed only when a screenshot showed a UI engineer being
+suggested for a Backend bug. Re-added in \texttt{7450b24}. A proper
+regression harness against the ``candidate must be in the routed
+team's roster'' invariant would have caught this in CI.
+\end{gotchabox}
 
 \subsection{Triage}
 
@@ -1001,11 +1074,22 @@ Key UI features:
       Displays the full 5-class probability distribution.
 \item \textbf{Token-expiry banner}: red at the top of the page when
       GENVOY\_TOKEN is expired / missing / malformed. Silent when
-      healthy.
+      healthy. Backed by \texttt{genvoy\_token\_status()} which decodes
+      the JWT's \texttt{exp} claim and picks one of five states.
+\item \textbf{Low-confidence retrieval warning}: a $\square$ banner
+      above the Similar Past Bugs table when the top similarity was
+      below the 0.10 relevance threshold. Tells the reviewer that
+      owner + triage were escalated to defaults rather than derived
+      from the shown bugs, so they don't misread the pipeline's
+      escalation as ``no owner data available.''
 \item \textbf{Widget-key versioning}: each fresh triage bumps a
       \texttt{triage\_version} counter and the Step 2 widget keys
       include it, so the tiles always reset to the newest predictions
       instead of persisting the previous override.
+\item \textbf{Hot-reload of \texttt{.env}}: \texttt{load\_dotenv(override=True)}
+      at module load, so refreshing the hourly-expiring \texttt{GENVOY\_TOKEN}
+      in \texttt{.env} takes effect on the very next widget click. No
+      Streamlit restart required.
 \end{itemize}
 
 \begin{screenshotbox}[Streamlit UI --- full page]
@@ -1103,6 +1187,33 @@ Raised from an original 0.50 to 0.60 to route more borderline bugs to
 Claude+skills. This costs about 600 ms of average latency in exchange for
 a small accuracy bump on the shifted bugs. The trade-off is a defensible
 one for a demo where accuracy matters more than latency.
+
+\subsection{Enforcing team-roster membership on owner candidates}
+
+The owner sub-agent's candidate pool is now the intersection of ``non-
+manager assignees on same-component similar bugs'' AND ``members of the
+current roster for the routed component.'' Both filters have to pass ---
+being on a same-component similar bug alone isn't enough if the person's
+primary team is different. The alternative (union-based candidate pool,
+which the code briefly had) let a UI engineer be suggested for a Backend
+bug because they had one stray Backend assignment in history. Making the
+filter an intersection restored the property that classification-time
+routing (``this is a Backend bug'') strictly implies pick-time routing
+(``the owner must be a Backend engineer''). The two are otherwise
+allowed to disagree, and every disagreement is a bug.
+
+\subsection{The 0.10 relevance-gate threshold on retrieval}
+
+Cross-encoder scores in the $0.01$--$0.03$ band are the model
+confidently saying ``these bugs are not related.'' Handing that list
+to owner and triage produces plausible-looking-but-wrong picks (owner
+picks an engineer who worked on an unrelated bug; triage averages
+priorities of unrelated bugs). The relevance gate short-circuits that:
+if the top rerank score is below \texttt{RELEVANCE\_THRESHOLD = 0.10},
+the host passes an empty list to the reasoning sub-agents, and each
+sub-agent's ``no similar bugs'' path handles it correctly (owner
+escalates, triage reasons from bug text, dedup returns no duplicate).
+Details in section~\ref{sec:relevance-gate}.
 
 \newpage
 
@@ -1396,10 +1507,14 @@ Output for one of the sample bugs
     "severity_justification":  "100% repro crash on payment button ...",
     "owner_suggestion":        "Hyzam",
     "owner_reason":            "Highest similar-bug match count on UI ...",
-    "owner_method":            "frequency-fallback",
+    "owner_method":            "claude",
     "duplicate_of":            "FLIPPI-1198",
     "duplicate_confidence":    0.79,
     "similar_bugs":            [ ... top-10 ... ],
+    "retrieval": {
+      "top_relevance_score":   0.79,
+      "is_low_confidence":     false
+    },
     "media_findings":          [ ... ],
     "media_combined_summary":  "...",
     "pipeline":                "multi-agent (Astral)",
