@@ -918,24 +918,38 @@ def render_triage_md(triage: dict) -> str:
     return "\n".join(lines)
 
 
-def synthesize_email_from_form(title: str, platform: str, summary: str, steps: str) -> str:
+def synthesize_email_from_form(
+    title:    str,
+    platform: str,
+    summary:  str,
+    steps:    str,
+    reporter: str = "",
+) -> str:
     """
     Build an email-shaped string from the structured-form fields so the
     existing parser pipeline (regex on the rule-based side, LLM on the
     multi-agent side) handles it identically to a pasted .txt email.
 
+    Reporter is optional but recommended — when present it's put in a
+    `From:` header at the top so the parser picks it up as the bug's
+    reporter (same as it would from a real email).
+
     Returns "" when title and summary are both empty so the Triage button
     stays disabled via the same `not raw_text.strip()` check the email
     mode uses.
     """
-    title   = (title   or "").strip()
-    summary = (summary or "").strip()
+    title    = (title    or "").strip()
+    summary  = (summary  or "").strip()
+    reporter = (reporter or "").strip()
     if not title and not summary:
         return ""
 
     parts: list[str] = []
+    if reporter:
+        parts.append(f"From: {reporter}")
     if title:
         parts.append(f"Subject: {title}")
+    if reporter or title:
         parts.append("")
     if platform and platform != "Unknown":
         parts.append(f"Platform: {platform}")
@@ -1179,13 +1193,20 @@ with col_main:
             key=f"form_title_{st.session_state.input_version}",
         )
 
-        col_plat, _col_sp = st.columns([1, 2])
+        col_plat, col_reporter = st.columns([1, 2])
         with col_plat:
             form_platform = st.selectbox(
                 "Platform",
                 ["Android", "iOS", "Web", "Android, iOS", "Unknown"],
                 index=0,
                 key=f"form_platform_{st.session_state.input_version}",
+            )
+        with col_reporter:
+            form_reporter = st.text_input(
+                "Reporter",
+                placeholder="e.g. Rahul Verma <rahul.verma@flipkart.com>",
+                key=f"form_reporter_{st.session_state.input_version}",
+                help="Who is filing this bug. Stored on the ticket in the dashboard.",
             )
 
         form_summary = st.text_area(
@@ -1209,6 +1230,7 @@ with col_main:
 
         raw_text = synthesize_email_from_form(
             form_title, form_platform, form_summary, form_steps,
+            reporter=form_reporter,
         )
 
     # Attachments — full width, with LARGER previews
@@ -1829,20 +1851,18 @@ if "triage_result" in st.session_state:
         draft.triage_notes["human_overrides"] = overrides
 
     # ── Tabs ────────────────────────────────────────────────────────────────
-    # Summary tab dropped — its content (justification, scoring path, owner
-    # reason, similar bugs) is already in Triage notes (which renders them
-    # in a richer markdown table with clickable Jira links). The metric
-    # tiles above already give the at-a-glance view.
+    # Raw JSON tab dropped — the download-JSON button now lives in Step 3
+    # (next to Publish) since the DB dashboard is the primary "where did
+    # this ticket go?" surface, not a JSON blob.
 
-    tab_names = ["Findings", "Raw JSON"]
+    tab_names = ["Findings"]
     if use_multi_agent and media and media.findings:
-        tab_names.insert(1, "Media findings")
+        tab_names.append("Media findings")
     tabs = st.tabs(tab_names)
 
     # Tabs render in the order they appear in tab_names:
     #   1. Findings  (always first — primary detail view; was "Triage notes")
     #   2. Media findings  (only when multi-agent + attachments)
-    #   3. Raw JSON
     idx = 0
 
     with tabs[idx]:
@@ -1916,33 +1936,9 @@ if "triage_result" in st.session_state:
                 st.divider()
         idx += 1
 
-    with tabs[idx]:
-        # Lean download payload — only the fields a human (or an
-        # automation script) actually needs to file the ticket in Jira.
-        # Everything else (similar bugs, classifier provenance, owner
-        # reasoning, audit trail, etc.) lives only in the Findings tab,
-        # not in the downloaded JSON.
-        ticket_draft = {
-            "jira_ticket_draft":   draft.jira_payload,
-            "suggested_assignee":  draft.triage_notes.get("owner_suggestion"),
-        }
-        # Carry forward the human_overrides audit trail when the reviewer
-        # has actually edited something — it tells the filer which fields
-        # were corrected vs. accepted as-is.
-        overrides = draft.triage_notes.get("human_overrides")
-        if overrides:
-            ticket_draft["human_overrides"] = overrides
-
-        full_json = json.dumps(ticket_draft, indent=2, ensure_ascii=False)
-        st.code(full_json, language="json")
-
-        st.download_button(
-            "⬇ Download ticket draft JSON",
-            data=full_json,
-            file_name=f"ticket_draft_{pipeline_label.replace(' ', '_')}.json",
-            mime="application/json",
-            use_container_width=True,
-        )
+    # (Raw JSON tab removed 2026-07. The download-JSON button now lives
+    # under Step 3 next to Publish — the DB dashboard is the primary
+    # "where did this ticket go?" surface now, not a JSON blob view.)
 
     # ── Approve & Publish (prototype demo) ─────────────────────────────────
     # Approve gates Publish-to-Jira. Publish itself is intentionally a no-op
