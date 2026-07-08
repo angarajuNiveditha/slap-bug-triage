@@ -105,36 +105,52 @@ st.set_page_config(
 
 # ── Disable browser autocomplete on all text inputs ─────────────────────
 # Streamlit doesn't expose an `autocomplete` prop on st.text_input /
-# st.text_area, so the browser happily shows autofill suggestions from
-# its cross-form history — Chrome will offer previously-typed "Summary"
-# text when the reviewer clicks in "Reporter" and so on. Inject a
-# MutationObserver that sets autocomplete="off" on every input as it
-# appears, so freshly-versioned widget keys are covered too.
-st.markdown(
+# st.text_area, so the browser happily shows form-history suggestions
+# from previously-typed values in any text field on this domain — Chrome
+# will offer previously-typed "Summary" text when the reviewer clicks in
+# "Reporter" and so on.
+#
+# st.markdown(unsafe_allow_html=True) STRIPS <script> tags for XSS
+# safety, so a JS block there won't actually execute. Instead we use
+# st.components.v1.html which renders inside a same-origin iframe;
+# from there we can reach `window.parent.document` (the real Streamlit
+# page's DOM) and set autocomplete="off" on every input as it appears.
+import streamlit.components.v1 as _components
+_components.html(
     """
     <script>
-      (function () {
+    (function () {
         function killAutocomplete(root) {
-          root.querySelectorAll('input, textarea').forEach(function (el) {
-            if (el.getAttribute('autocomplete') !== 'off') {
-              el.setAttribute('autocomplete', 'off');
-              el.setAttribute('autocorrect',  'off');
-              el.setAttribute('spellcheck',   'false');
-            }
-          });
-        }
-        killAutocomplete(document);
-        new MutationObserver(function (mutations) {
-          mutations.forEach(function (m) {
-            m.addedNodes.forEach(function (n) {
-              if (n.nodeType === 1) killAutocomplete(n);
+            if (!root || !root.querySelectorAll) return;
+            root.querySelectorAll('input, textarea').forEach(function (el) {
+                el.setAttribute('autocomplete', 'off');
+                el.setAttribute('autocorrect',  'off');
+                el.setAttribute('spellcheck',   'false');
+                // Randomise `name` so the browser can't index form-history
+                // by a stable identifier. Chrome ignores `autocomplete=off`
+                // on some field-name heuristics; a randomised name defeats
+                // the heuristic entirely.
+                if (!el.dataset.slapNamed) {
+                    el.setAttribute('name', 'slap_' + Math.random().toString(36).slice(2, 10));
+                    el.dataset.slapNamed = '1';
+                }
             });
-          });
-        }).observe(document.body, { childList: true, subtree: true });
-      })();
+        }
+        // Reach the parent Streamlit page (this script itself runs in an
+        // invisible components iframe).
+        var doc = (window.parent && window.parent.document) || document;
+        killAutocomplete(doc);
+        new MutationObserver(function (mutations) {
+            mutations.forEach(function (m) {
+                m.addedNodes.forEach(function (n) {
+                    if (n && n.nodeType === 1) killAutocomplete(n);
+                });
+            });
+        }).observe(doc.body, { childList: true, subtree: true });
+    })();
     </script>
     """,
-    unsafe_allow_html=True,
+    height=0,
 )
 
 # ── Theme: typography, colours, polish ─────────────────────────────────────
@@ -1380,12 +1396,20 @@ with col_main:
                 key=f"form_platform_{st.session_state.input_version}",
             )
         with col_reporter:
-            form_reporter = st.text_input(
+            # Textarea instead of text_input so browsers don't offer
+            # form-history suggestions from previously-typed Summary / Title
+            # content. Height 68 (Streamlit minimum) renders as a single
+            # visual line with the same feel as a regular input.
+            form_reporter = st.text_area(
                 "Reporter",
                 placeholder="e.g. Rahul Verma <rahul.verma@flipkart.com>",
                 key=f"form_reporter_{st.session_state.input_version}",
+                height=68,
                 help="Who is filing this bug. Stored on the ticket in the dashboard.",
             )
+            # Strip any newlines the user pastes so downstream parsing sees
+            # a single-line reporter value.
+            form_reporter = (form_reporter or "").replace("\n", " ").strip()
 
         form_summary = st.text_area(
             "Summary",
