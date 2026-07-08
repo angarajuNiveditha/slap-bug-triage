@@ -37,6 +37,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -50,9 +51,10 @@ from sqlalchemy.orm import DeclarativeBase, Session
 
 _DEFAULT_DSN = "mysql+pymysql://root@localhost/slap_triage"
 
-DATA_DIR       = Path(__file__).parent.parent / "data"
-EVENT_LOG_PATH = DATA_DIR / "tickets_events.csv"
-SNAPSHOT_PATH  = DATA_DIR / "tickets_snapshot.csv"
+DATA_DIR         = Path(__file__).parent.parent / "data"
+EVENT_LOG_PATH   = DATA_DIR / "tickets_events.csv"
+SNAPSHOT_PATH    = DATA_DIR / "tickets_snapshot.csv"
+ATTACHMENTS_ROOT = DATA_DIR / "tickets_attachments"
 
 STATUSES        = ["Open", "In Progress", "Done", "Closed"]
 DEFAULT_STATUS  = "Open"
@@ -120,13 +122,20 @@ def init_db() -> None:
 
 # ── Public API ─────────────────────────────────────────────────────────────
 
-def insert_ticket(fields: dict) -> str:
-    """Mint a new BUGT-N key, insert the ticket, log an INSERT event,
-    refresh the snapshot CSV. Returns the new key.
+def insert_ticket(fields: dict, source_attachment_paths: list = None) -> str:
+    """Mint a new BUGT-N key, persist any attachments, insert the row,
+    log an INSERT event, refresh the snapshot CSV. Returns the new key.
 
     Expected keys in `fields` (all optional except summary):
         summary, description, component, priority, assignee,
         reporter, duplicate_of, media_paths (list[str])
+
+    `source_attachment_paths` (optional): list of file paths (typically
+    tempdir paths from save_uploads_to_tmp) that should be copied under
+    data/tickets_attachments/<key>/ before the row is inserted. If
+    provided, the resulting persistent paths REPLACE any
+    fields["media_paths"] passed in — callers should use one mechanism
+    or the other, not both.
     """
     init_db()
     now    = datetime.now()        # local time by design (see file header)
@@ -134,6 +143,15 @@ def insert_ticket(fields: dict) -> str:
 
     with Session(engine) as session:
         key = _next_key(session)
+
+        # If the caller handed us upload tempdir paths, copy them under the
+        # ticket's persistent folder BEFORE writing the DB row. We want the
+        # stored media_paths to point at files that actually exist on disk
+        # long-term, not tempdir paths that vanish on OS cleanup.
+        if source_attachment_paths:
+            persistent = persist_attachments(key, source_attachment_paths)
+            fields = {**fields, "media_paths": persistent}
+
         ticket = Ticket(
             key          = key,
             summary      = (fields.get("summary") or "")[:500],
@@ -200,6 +218,43 @@ def list_tickets() -> list[dict]:
             .all()
         )
         return [_ticket_to_dict(t) for t in rows]
+
+
+def persist_attachments(ticket_key: str, source_paths: list) -> list:
+    """Copy uploaded attachments (typically living in a tempdir from
+    save_uploads_to_tmp) into a persistent per-ticket folder under
+    data/tickets_attachments/<ticket_key>/. Returns the list of new
+    absolute paths, ready to be JSON-encoded into the media_paths
+    column.
+
+    Filenames are preserved; on collision within the same folder we
+    prefix a numeric suffix. Missing / unreadable sources are skipped
+    silently rather than failing the whole publish operation.
+    """
+    if not source_paths:
+        return []
+    dest_dir = ATTACHMENTS_ROOT / ticket_key
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    saved: list[str] = []
+    for src in source_paths:
+        src_path = Path(src)
+        if not src_path.is_file():
+            continue
+        dst = dest_dir / src_path.name
+        # Collision-safe: if a same-named file already exists, add
+        # `_1`, `_2`, ... until we find a free name.
+        counter = 1
+        while dst.exists():
+            dst = dest_dir / f"{src_path.stem}_{counter}{src_path.suffix}"
+            counter += 1
+        try:
+            shutil.copy2(src_path, dst)
+            saved.append(str(dst.resolve()))
+        except OSError:
+            # e.g. permission error / disk full — skip that one attachment
+            continue
+    return saved
 
 
 # ── Internals ──────────────────────────────────────────────────────────────

@@ -15,6 +15,10 @@ data/tickets.db
 data/tickets_events.csv
 data/tickets_snapshot.csv
 
+# Persistent copies of user-uploaded ticket attachments (screenshots,
+# videos). One folder per BUGT-N key. Real bug media — never committed.
+data/tickets_attachments/
+
 # Cached embedding index (rebuilt by build_embedding_index.py)
 data/embedding_index.npz
 data/embedding_index_logreg.pkl

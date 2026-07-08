@@ -67,6 +67,7 @@ DATA_DIR      = Path(__file__).parent / "data"
 # The set lives in src/team_config.py so both this UI and the classifier's
 # roster-derivation step read the same source of truth. Extend it there.
 from src.team_config import MANAGER_NAMES
+from src import db as ticket_db
 
 # ── Editable-output config ─────────────────────────────────────────────────
 # These power the override widgets that appear under the metric tiles so a
@@ -1036,6 +1037,99 @@ elif _token_status["status"] == "expiring_soon":
     st.warning(_token_status["message"], icon="⏳")
 
 
+# ── View routing ─────────────────────────────────────────────────────────
+# Two views: the triage page (default) and the ticket dashboard. Nav
+# between them is a session_state flag that Publish flips to "dashboard"
+# automatically, and the two nav buttons below flip manually.
+if "view" not in st.session_state:
+    st.session_state.view = "triage"
+
+
+def render_dashboard_view() -> None:
+    """Render the ticket dashboard: table of everything in the DB with an
+    inline-editable Status column. Shown when st.session_state.view ==
+    "dashboard". Any status change writes back to the DB via
+    ticket_db.update_status()."""
+    top_l, top_r = st.columns([3, 1])
+    with top_l:
+        st.markdown('<div class="section-label">Ticket Dashboard</div>', unsafe_allow_html=True)
+    with top_r:
+        if st.button("← Back to Triage", use_container_width=True, key="btn_back_to_triage"):
+            st.session_state.view = "triage"
+            st.rerun()
+
+    # One-shot toast from the Publish handler ("Ticket BUGT-N saved").
+    _msg = st.session_state.pop("dashboard_toast", None)
+    if _msg:
+        st.success(f"✓ {_msg}")
+
+    tickets = ticket_db.list_tickets()
+    if not tickets:
+        st.info(
+            "No tickets yet. Triage a bug and click **Publish** to file "
+            "the first one — it'll show up here."
+        )
+        return
+
+    # Streamlit's data_editor is the built-in editable-table widget.
+    # We surface exactly the columns you asked for, in order.
+    import pandas as pd
+    df = pd.DataFrame([
+        {
+            "Key":       t["key"],
+            "Summary":   t["summary"],
+            "Status":    t["status"],
+            "Assignee":  t["assignee"],
+            "Priority":  t["priority"],
+            "Reporter":  t["reporter"],
+            "Created":   t["created"].replace("T", " "),
+            "Updated":   t["updated"].replace("T", " "),
+        }
+        for t in tickets
+    ])
+    edited_df = st.data_editor(
+        df,
+        column_config={
+            "Key":      st.column_config.TextColumn("Key", disabled=True, width="small"),
+            "Summary":  st.column_config.TextColumn("Summary", disabled=True, width="large"),
+            "Status":   st.column_config.SelectboxColumn(
+                            "Status",
+                            options=ticket_db.STATUSES,
+                            required=True,
+                            width="small",
+                        ),
+            "Assignee": st.column_config.TextColumn("Assignee", disabled=True, width="medium"),
+            "Priority": st.column_config.TextColumn("Priority", disabled=True, width="small"),
+            "Reporter": st.column_config.TextColumn("Reporter", disabled=True, width="medium"),
+            "Created":  st.column_config.TextColumn("Created", disabled=True, width="small"),
+            "Updated":  st.column_config.TextColumn("Updated", disabled=True, width="small"),
+        },
+        hide_index      = True,
+        use_container_width = True,
+        num_rows        = "fixed",       # no add/delete rows via the widget
+        key             = "dashboard_editor",
+    )
+
+    # Detect status changes and persist them.
+    changes = 0
+    for i, row in edited_df.iterrows():
+        original = df.iloc[i]
+        if row["Status"] != original["Status"]:
+            try:
+                ticket_db.update_status(row["Key"], row["Status"])
+                changes += 1
+            except ValueError as e:
+                st.error(f"Failed to update {row['Key']}: {e}")
+    if changes:
+        st.toast(f"✓ Updated status on {changes} ticket(s)", icon="💾")
+        st.rerun()      # re-read so the Updated column reflects the change
+
+
+if st.session_state.view == "dashboard":
+    render_dashboard_view()
+    st.stop()   # short-circuit — the triage columns below don't render
+
+
 # ── Body: left rail (pipeline) + main column (input) ───────────────────────
 
 col_rail, col_main = st.columns([1, 3], gap="large")
@@ -1136,6 +1230,19 @@ samples       = sorted(DATA_DIR.glob("*.txt")) if DATA_DIR.exists() else []
 sample_names  = ["(paste your own)"] + [p.name for p in samples]
 
 with col_main:
+    # Dashboard nav — sits above Step 1 so it's the first thing a reviewer
+    # sees when they want to check what's already been filed.
+    nav_l, nav_r = st.columns([3, 1])
+    with nav_r:
+        try:
+            _ticket_count = len(ticket_db.list_tickets())
+        except Exception:
+            _ticket_count = 0
+        _label = f"📋 Dashboard ({_ticket_count})" if _ticket_count else "📋 Dashboard"
+        if st.button(_label, use_container_width=True, key="btn_go_dashboard"):
+            st.session_state.view = "dashboard"
+            st.rerun()
+
     st.markdown('<div class="section-label">Step 1 · Bug report</div>', unsafe_allow_html=True)
 
     # Top-row controls: input format + pipeline choice
@@ -1435,6 +1542,10 @@ if triage_btn:
         "media":           media,
         "use_multi_agent": use_multi_agent,
         "pipeline_label":  pipeline_label,
+        # Preserve the tempdir paths of any uploaded attachments so the
+        # Publish handler can copy them into the ticket's persistent
+        # folder (data/tickets_attachments/<BUGT-N>/) at write time.
+        "image_paths":     image_paths if use_multi_agent else [],
     }
     # Fresh run — bump the triage_version so the Step 2 widget keys change
     # and the tiles re-initialize with the newly-predicted values instead
@@ -1959,12 +2070,44 @@ if "triage_result" in st.session_state:
             st.rerun()
     else:
         st.success("✓ Draft approved — ready to file.")
-        if st.button("📤 Publish to Jira", type="primary", use_container_width=True, key="btn_publish_jira"):
-            # Intentionally a no-op for the prototype. Production would call
-            # JiraClient.create_issue() here (which doesn't exist yet — the
-            # client is deliberately read-only). Show a non-committal toast
-            # so the click feels acknowledged without misrepresenting state.
-            st.toast(
-                "📤 Publish-to-Jira clicked — UI demo only; no Jira write happens in this prototype.",
-                icon="ℹ",
-            )
+        if st.button("📤 Publish", type="primary", use_container_width=True, key="btn_publish_jira"):
+            # Publish writes the ticket to the local DB, copies any
+            # uploaded attachments to data/tickets_attachments/<BUGT-N>/,
+            # resets the triage state, and navigates to the dashboard
+            # so the reviewer sees the new row immediately.
+            try:
+                new_key = ticket_db.insert_ticket(
+                    fields = {
+                        "summary":      bug.title or "",
+                        "description":  bug.description or "",
+                        "component":    edited_comp if edited_comp != "bugs" else None,
+                        "priority":     edited_prio,
+                        "assignee":     edited_owner_clean,
+                        "reporter":     bug.reporter or "",
+                        "duplicate_of": sim.duplicate_of or None,
+                    },
+                    source_attachment_paths = r.get("image_paths") or [],
+                )
+            except Exception as e:
+                st.error(f"Could not save ticket to the local store: {e}")
+            else:
+                # Wipe every piece of state tied to this triage run so the
+                # next fresh triage starts clean. Bump input_version so the
+                # input widgets clear too.
+                for k in ("triage_result",
+                          "draft_approved",
+                          "btn_approve_draft",
+                          "btn_publish_jira",
+                          "corrections_written",
+                          "edit_owner_jira_query",
+                          "edit_owner_jira_pick"):
+                    st.session_state.pop(k, None)
+                st.session_state.input_version   = st.session_state.get("input_version", 0) + 1
+                st.session_state.triage_version  = st.session_state.get("triage_version", 0) + 1
+
+                # Stash a one-shot toast for the dashboard to render, since
+                # st.toast inside a mid-rerun script doesn't survive the
+                # navigation. See render_dashboard_view() for the pickup.
+                st.session_state.dashboard_toast = f"Ticket {new_key} saved"
+                st.session_state.view            = "dashboard"
+                st.rerun()
