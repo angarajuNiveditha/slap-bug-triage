@@ -314,6 +314,34 @@ class HostAgent:
         top_matches = sim_result.top_matches
         emit("similarity:done", f"{len(top_matches)} similar bug(s) ranked")
 
+        # ── Relevance gate ─────────────────────────────────────────────
+        # If the top rerank score is below RELEVANCE_THRESHOLD (0.10),
+        # the retrieval didn't actually find anything similar — the
+        # cross-encoder is telling us the top-30 candidates are all
+        # in the "clearly not related" zone. Rather than let owner /
+        # triage / dedup reason over noise, we pass an empty list to
+        # the parallel block:
+        #   - owner  → escalates via _escalate_to_team_manager()
+        #   - triage → reasons from bug text alone (no priority-voting)
+        #   - dedup  → returns "no duplicate" trivially
+        # The full top_matches is still stored on the draft so the UI
+        # can display it (with a warning) for the reviewer's context.
+        if sim_result.is_low_confidence:
+            emit(
+                "similarity:low_confidence",
+                f"Top similarity {sim_result.top_relevance_score:.3f} "
+                f"below relevance threshold — downstream reasoning will "
+                f"use manager-escalation defaults instead of these bugs",
+            )
+            print(
+                f"  [host] retrieval flagged low-confidence "
+                f"(top={sim_result.top_relevance_score:.3f}); passing "
+                f"empty list to dedup/owner/triage"
+            )
+            reasoning_matches = []
+        else:
+            reasoning_matches = top_matches
+
         # ── Step 4: dedup + owner + triage in PARALLEL ──────────────────
         # All three sub-agents are independent of each other — they take the
         # same inputs (BugReport + top-K similar bugs, plus the routed
@@ -323,6 +351,10 @@ class HostAgent:
         #
         # Each `claude -p` call spawns its own subprocess so they don't
         # share state. Inputs are read-only (no race conditions).
+        #
+        # NOTE: `reasoning_matches` here is the RELEVANCE-GATED list, not
+        # necessarily `top_matches`. The UI still sees the full top_matches
+        # for informational display via `sim.top_matches` below.
         emit("parallel:start", "Running dedup + owner + triage in parallel (3 sub-agents)…")
         print("  [host] parallel: dedup + owner + triage…")
         t_par = time.time()
@@ -330,18 +362,18 @@ class HostAgent:
         with ThreadPoolExecutor(max_workers=3) as ex:
             futures = {
                 ex.submit(
-                    decide_duplicate, bug, top_matches,
+                    decide_duplicate, bug, reasoning_matches,
                 ): "dedup",
                 ex.submit(
                     suggest_owner,
                     title        = bug.title,
                     description  = bug.description,
                     component    = classification.component,
-                    similar_bugs = top_matches,
+                    similar_bugs = reasoning_matches,
                     team_roster  = self.classifier.team_roster,
                 ): "owner",
                 ex.submit(
-                    score_severity, bug, top_matches,
+                    score_severity, bug, reasoning_matches,
                 ): "triage",
             }
             results: dict = {}
@@ -418,6 +450,14 @@ class HostAgent:
         }
         # Owner-method provenance: claude / frequency-fallback / no-candidates
         draft.triage_notes["owner_method"] = owner_result.method
+        # Retrieval-quality provenance. When the top similar-bug score was
+        # below RELEVANCE_THRESHOLD, downstream reasoning was fed an empty
+        # list — the UI uses this flag to render a "weak historical match"
+        # banner above the similar-bugs table.
+        draft.triage_notes["retrieval"] = {
+            "top_relevance_score": round(sim_result.top_relevance_score, 3),
+            "is_low_confidence":   sim_result.is_low_confidence,
+        }
         if media.findings:
             draft.triage_notes["media_findings"] = [
                 {

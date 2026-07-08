@@ -884,6 +884,24 @@ def render_triage_md(triage: dict) -> str:
         lines += [
             "### Similar Past Bugs",
             "",
+        ]
+        # Warn when the retrieval was gated out — downstream sub-agents did
+        # NOT use these bugs to derive the owner / priority. See the
+        # relevance-threshold logic in embedding_similarity.py.
+        retrieval = triage.get("retrieval") or {}
+        if retrieval.get("is_low_confidence"):
+            top = retrieval.get("top_relevance_score", 0.0)
+            lines += [
+                (
+                    f"> ⚠ **Weak historical match** — top similarity was "
+                    f"{top:.3f}, below the 0.10 relevance threshold. "
+                    f"Owner + triage were escalated to defaults rather "
+                    f"than derived from these bugs. They're shown for "
+                    f"your context only."
+                ),
+                "",
+            ]
+        lines += [
             "| Jira Key | Priority | Similarity | Assignee | Summary |",
             "|---|---|---|---|---|",
         ]

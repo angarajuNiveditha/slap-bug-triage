@@ -39,6 +39,18 @@ RECALL_K                 = 30    # candidates cosine feeds to the cross-encoder
 RERANK_K                 = 10    # final K after the rerank
 CROSS_ENCODER_MODEL      = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
+# Sigmoid-normalised cross-encoder score below which the whole retrieval is
+# treated as "no relevant matches found." Downstream sub-agents (owner,
+# triage) receive an empty list in that case so they escalate to defaults
+# rather than reasoning over unrelated bugs. The full top-K is still
+# returned for UI display — this only gates the downstream reasoning path.
+#
+# Calibration: sigmoid(-2.2) ≈ 0.10. A raw cross-encoder score below -2.2
+# means the model is meaningfully leaning "these bugs are not related."
+# Good matches typically score 0.6+; loosely-related in the 0.2-0.4 band;
+# below 0.10 is the "clearly not related" zone.
+RELEVANCE_THRESHOLD      = 0.10
+
 
 # ── Cross-encoder singleton (lazy) ──────────────────────────────────────────
 # First call downloads ~90 MB from the Hugging Face hub, then caches under
@@ -65,8 +77,27 @@ class EmbeddingSimilarityResult:
 
     Owner suggestion lives in a separate sub-agent now (see subagent_owner),
     so this result intentionally does NOT carry owner data.
+
+    `top_relevance_score` and `is_low_confidence` are used by the host to
+    decide whether to pass `top_matches` to the downstream reasoning
+    sub-agents (owner / triage) or an empty list. See RELEVANCE_THRESHOLD
+    above for the calibration.
     """
-    top_matches: list   # list[SimilarBug]
+    top_matches:         list           # list[SimilarBug] — always shown to UI
+    top_relevance_score: float = 0.0    # max .similarity across top_matches
+    is_low_confidence:   bool  = False  # True when top_relevance_score < RELEVANCE_THRESHOLD
+
+
+def _make_result(matches: list) -> "EmbeddingSimilarityResult":
+    """Build a result carrying the low-confidence flag derived from the
+    top match's score. Used by every return site in the engine so the
+    flag can never fall out of sync with the ranking."""
+    top = max((m.similarity for m in matches), default=0.0)
+    return EmbeddingSimilarityResult(
+        top_matches         = matches,
+        top_relevance_score = top,
+        is_low_confidence   = (top < RELEVANCE_THRESHOLD),
+    )
 
 
 class EmbeddingSimilarityEngine:
@@ -96,7 +127,7 @@ class EmbeddingSimilarityEngine:
         top_idx = top_idx[np.argsort(-sims[top_idx])]
 
         matches = [self._build_match(i, float(sims[i])) for i in top_idx]
-        return EmbeddingSimilarityResult(top_matches=matches)
+        return _make_result(matches)
 
     def find_similar_with_rerank(
         self,
@@ -146,7 +177,7 @@ class EmbeddingSimilarityEngine:
         # more than we have), just return the cosine ranking as-is.
         if len(top_idx) <= top_k:
             matches = [self._build_match(i, float(sims[i])) for i in top_idx]
-            return EmbeddingSimilarityResult(top_matches=matches)
+            return _make_result(matches)
 
         # ── Stage 2: cross-encoder rerank ──────────────────────────
         try:
@@ -155,7 +186,7 @@ class EmbeddingSimilarityEngine:
             print(f"  [similarity] cross-encoder unavailable ({e}); returning cosine top-{top_k}")
             top_idx = top_idx[:top_k]
             matches = [self._build_match(i, float(sims[i])) for i in top_idx]
-            return EmbeddingSimilarityResult(top_matches=matches)
+            return _make_result(matches)
 
         # Build (query, candidate_text) pairs for the recall set.
         pairs = []
@@ -189,7 +220,7 @@ class EmbeddingSimilarityEngine:
             f"  [similarity] cosine recall {len(top_idx)} in {recall_ms:.1f}ms; "
             f"cross-encoder rerank in {rerank_ms:.1f}ms → top-{top_k}"
         )
-        return EmbeddingSimilarityResult(top_matches=matches)
+        return _make_result(matches)
 
     # ── Internal ────────────────────────────────────────────────────
 
