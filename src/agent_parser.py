@@ -76,7 +76,23 @@ def _extract_email(text: str) -> Optional[str]:
 
 
 def _extract_name(text: str, email: Optional[str]) -> Optional[str]:
-    # "Regards,\nFirst Last" or "Thanks,\nFirst Last"
+    # 1. "From: Name <email>" — the display-name half of a mail header
+    m = re.search(r'^\s*From:\s*"?([^"<\n]+?)"?\s*<[^>]+>\s*$', text, re.MULTILINE)
+    if m:
+        return m.group(1).strip()
+
+    # 2. Structured-form path: bare "From: Name" (no <email> part).
+    #    Accepts single names ("Prince") as well as "First Last" — the
+    #    reviewer typed this into the form's Reporter field.
+    m = re.search(r'^\s*From:\s*([^\n<]+?)\s*$', text, re.MULTILINE)
+    if m:
+        candidate = m.group(1).strip()
+        # Reject if the "name" looks like a bare email (already covered
+        # by _extract_email) or is empty.
+        if candidate and "@" not in candidate:
+            return candidate
+
+    # 3. Email-footer patterns: "Regards,\nFirst Last" or "Thanks,\nFirst Last"
     for pat in [
         r'(?:Regards|Thanks|Cheers|Best)[,\s]*\n\s*([A-Z][a-z]+(?: [A-Z][a-z]+)+)',
         r'^-\s*([A-Z][a-z]+(?: [A-Z][a-z]+)+)\s*$',
@@ -84,9 +100,12 @@ def _extract_name(text: str, email: Optional[str]) -> Optional[str]:
         m = re.search(pat, text, re.MULTILINE)
         if m:
             return m.group(1).strip()
+
+    # 4. Derive from the local-part of the reporter's email if we have one
     if email:
         parts = re.split(r'[._]', email.split('@')[0])
         return ' '.join(p.capitalize() for p in parts if p)
+
     return None
 
 

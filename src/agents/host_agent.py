@@ -314,33 +314,54 @@ class HostAgent:
         top_matches = sim_result.top_matches
         emit("similarity:done", f"{len(top_matches)} similar bug(s) ranked")
 
-        # ── Relevance gate ─────────────────────────────────────────────
-        # If the top rerank score is below RELEVANCE_THRESHOLD (0.10),
-        # the retrieval didn't actually find anything similar — the
-        # cross-encoder is telling us the top-30 candidates are all
-        # in the "clearly not related" zone. Rather than let owner /
-        # triage / dedup reason over noise, we pass an empty list to
-        # the parallel block:
-        #   - owner  → escalates via _escalate_to_team_manager()
-        #   - triage → reasons from bug text alone (no priority-voting)
-        #   - dedup  → returns "no duplicate" trivially
-        # The full top_matches is still stored on the draft so the UI
-        # can display it (with a warning) for the reviewer's context.
-        if sim_result.is_low_confidence:
+        # ── Relevance gate — per-bug filter, not just top-score check ───
+        # The cross-encoder scores each retrieved bug independently. A
+        # top-10 might have one 0.79 (very relevant) followed by 9 bugs
+        # in the 0.01–0.05 band (clearly not related). If we hand all 10
+        # to owner/triage, the 9 unrelated ones dilute the signal —
+        # owner picks assignees who worked on unrelated bugs; triage
+        # averages priorities across noise.
+        #
+        # Fix: filter INDIVIDUAL bugs by RELEVANCE_THRESHOLD before
+        # passing them downstream. Only bugs that clear 0.10 count as
+        # signal. The full top_matches is still stored on the draft so
+        # the UI can display it (with a warning) for the reviewer's
+        # context.
+        from ..embedding_similarity import RELEVANCE_THRESHOLD
+        reasoning_matches = [m for m in top_matches if m.similarity >= RELEVANCE_THRESHOLD]
+
+        if not reasoning_matches:
+            # Nothing survived the per-bug filter — matches downstream
+            # gets an empty list. Same cascade as before:
+            #   - owner  → escalates via _escalate_to_team_manager()
+            #   - triage → reasons from bug text alone (no priority-voting)
+            #   - dedup  → returns "no duplicate" trivially
             emit(
                 "similarity:low_confidence",
-                f"Top similarity {sim_result.top_relevance_score:.3f} "
-                f"below relevance threshold — downstream reasoning will "
-                f"use manager-escalation defaults instead of these bugs",
+                f"No similar bug cleared the {RELEVANCE_THRESHOLD:.2f} "
+                f"relevance threshold (top score was "
+                f"{sim_result.top_relevance_score:.3f}) — escalating owner "
+                f"to team manager, triage reasons from bug text alone",
             )
             print(
-                f"  [host] retrieval flagged low-confidence "
-                f"(top={sim_result.top_relevance_score:.3f}); passing "
-                f"empty list to dedup/owner/triage"
+                f"  [host] 0/{len(top_matches)} matches above "
+                f"{RELEVANCE_THRESHOLD:.2f} (top={sim_result.top_relevance_score:.3f}); "
+                f"passing empty list to dedup/owner/triage"
             )
-            reasoning_matches = []
-        else:
-            reasoning_matches = top_matches
+        elif len(reasoning_matches) < len(top_matches):
+            # Some passed, some didn't — the sub-agents get the filtered
+            # list, but note it for the reviewer via the UI banner.
+            emit(
+                "similarity:partial_confidence",
+                f"{len(reasoning_matches)}/{len(top_matches)} matches cleared "
+                f"the {RELEVANCE_THRESHOLD:.2f} relevance threshold; low-scoring "
+                f"bugs excluded from downstream reasoning",
+            )
+            print(
+                f"  [host] {len(reasoning_matches)}/{len(top_matches)} matches "
+                f"cleared {RELEVANCE_THRESHOLD:.2f}; dropping the rest before "
+                f"the parallel block"
+            )
 
         # ── Step 4: dedup + owner + triage in PARALLEL ──────────────────
         # All three sub-agents are independent of each other — they take the
@@ -455,8 +476,11 @@ class HostAgent:
         # list — the UI uses this flag to render a "weak historical match"
         # banner above the similar-bugs table.
         draft.triage_notes["retrieval"] = {
-            "top_relevance_score": round(sim_result.top_relevance_score, 3),
-            "is_low_confidence":   sim_result.is_low_confidence,
+            "top_relevance_score":   round(sim_result.top_relevance_score, 3),
+            "is_low_confidence":     sim_result.is_low_confidence,
+            "kept_for_reasoning":    len(reasoning_matches),
+            "total_top_matches":     len(top_matches),
+            "relevance_threshold":   RELEVANCE_THRESHOLD,
         }
         if media.findings:
             draft.triage_notes["media_findings"] = [

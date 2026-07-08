@@ -103,6 +103,40 @@ st.set_page_config(
     layout="wide",
 )
 
+# ── Disable browser autocomplete on all text inputs ─────────────────────
+# Streamlit doesn't expose an `autocomplete` prop on st.text_input /
+# st.text_area, so the browser happily shows autofill suggestions from
+# its cross-form history — Chrome will offer previously-typed "Summary"
+# text when the reviewer clicks in "Reporter" and so on. Inject a
+# MutationObserver that sets autocomplete="off" on every input as it
+# appears, so freshly-versioned widget keys are covered too.
+st.markdown(
+    """
+    <script>
+      (function () {
+        function killAutocomplete(root) {
+          root.querySelectorAll('input, textarea').forEach(function (el) {
+            if (el.getAttribute('autocomplete') !== 'off') {
+              el.setAttribute('autocomplete', 'off');
+              el.setAttribute('autocorrect',  'off');
+              el.setAttribute('spellcheck',   'false');
+            }
+          });
+        }
+        killAutocomplete(document);
+        new MutationObserver(function (mutations) {
+          mutations.forEach(function (m) {
+            m.addedNodes.forEach(function (n) {
+              if (n.nodeType === 1) killAutocomplete(n);
+            });
+          });
+        }).observe(document.body, { childList: true, subtree: true });
+      })();
+    </script>
+    """,
+    unsafe_allow_html=True,
+)
+
 # ── Theme: typography, colours, polish ─────────────────────────────────────
 # Pulled toward SLAP's own aesthetic: clean white background, large
 # headings, soft pink (#E11D74) accent that mimics the SLAP brand's
@@ -676,20 +710,41 @@ if "triage_version" not in st.session_state:
 
 
 # ── Cached resources ────────────────────────────────────────────────────────
+#
+# Two independent loaders, one per pipeline. Split so that a multi-agent-only
+# session doesn't hit Jira at all — the host uses the pre-built embedding
+# index on disk, no live fetch required. The rule-based path still needs a
+# fresh 300-bug fetch for its TF-IDF similarity index, but it's loaded
+# lazily the first time the user toggles the pipeline choice to Rule-based.
 
-@st.cache_resource(show_spinner="Connecting to Jira and indexing 300 historical bugs (one-time per session)...")
-def get_engines() -> tuple[RuleEngine, HostAgent, int]:
-    """Build both pipelines' indexes once and reuse across triage calls."""
+@st.cache_resource(show_spinner="Loading multi-agent pipeline (embedding classifier + similarity engine)…")
+def get_host_agent() -> HostAgent:
+    """The multi-agent host doesn't need a live Jira fetch — its
+    classifier + similarity engine read the pre-built 564-bug embedding
+    index off disk (data/embedding_index.npz). This is fast (~1s) and
+    doesn't hit the network."""
+    return HostAgent()
+
+
+@st.cache_resource(show_spinner="Fetching 300 recent FLIPPI bugs for the rule-based TF-IDF index…")
+def get_rule_engine_and_count() -> tuple[RuleEngine, int]:
+    """The rule-based pipeline needs a live Jira fetch because its
+    similarity engine uses TF-IDF over recent bug summaries + descriptions.
+    Only called when the user selects Rule-based in the pipeline toggle."""
     jira   = JiraClient()
     issues = jira.fetch_recent_bugs(limit=300)
-
     rb = RuleEngine()
     rb.build_index(issues)
+    return rb, len(issues)
 
-    host = HostAgent()
-    host.build_index(issues)
 
-    return rb, host, len(issues)
+def get_engines() -> tuple[RuleEngine, HostAgent, int]:
+    """Backwards-compatible shim — some call sites still ask for both
+    engines at once. The two @st.cache_resource loaders behind this are
+    still lazy, so multi-agent-only paths never trigger the Jira fetch."""
+    rb, n_indexed = get_rule_engine_and_count()
+    host          = get_host_agent()
+    return rb, host, n_indexed
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -888,17 +943,28 @@ def render_triage_md(triage: dict) -> str:
         ]
         # Warn when the retrieval was gated out — downstream sub-agents did
         # NOT use these bugs to derive the owner / priority. See the
-        # relevance-threshold logic in embedding_similarity.py.
+        # per-bug relevance filter in host_agent.py.
         retrieval = triage.get("retrieval") or {}
-        if retrieval.get("is_low_confidence"):
-            top = retrieval.get("top_relevance_score", 0.0)
+        kept      = retrieval.get("kept_for_reasoning", 0)
+        total     = retrieval.get("total_top_matches",  0)
+        threshold = retrieval.get("relevance_threshold", 0.10)
+        top       = retrieval.get("top_relevance_score", 0.0)
+        if total and kept == 0:
             lines += [
                 (
-                    f"> ⚠ **Weak historical match** — top similarity was "
-                    f"{top:.3f}, below the 0.10 relevance threshold. "
-                    f"Owner + triage were escalated to defaults rather "
-                    f"than derived from these bugs. They're shown for "
-                    f"your context only."
+                    f"> ⚠ **No historical bugs cleared the relevance threshold** — "
+                    f"top score was {top:.3f}, below {threshold:.2f}. Owner + "
+                    f"triage were escalated to defaults rather than derived "
+                    f"from the {total} bugs shown. They're for your context only."
+                ),
+                "",
+            ]
+        elif total and kept < total:
+            lines += [
+                (
+                    f"> ℹ **{kept} of {total} bugs cleared the relevance threshold** "
+                    f"({threshold:.2f}). Only those {kept} drove the owner + triage "
+                    f"picks; the lower-scoring rows below are shown for context."
                 ),
                 "",
             ]
@@ -1199,7 +1265,12 @@ PIPELINE_RAIL_HTML = """
       <div class="pipe-vnode-icon">O</div>
       <div class="pipe-vnode-text">
         <div class="pipe-vnode-name">Owner</div>
-        <div class="pipe-vnode-desc">Picks an owner from the routed component's team roster, grounded in similar past bugs.</div>
+        <div class="pipe-vnode-desc">Escalation ladder — first match wins.</div>
+        <div class="pipe-vnode-substages">
+          <div class="pipe-vnode-substage"><span><strong>Engineer</strong> — with similar-bug history on this team.</span></div>
+          <div class="pipe-vnode-substage"><span><strong>Closest-bug manager</strong> — if only managers appear in similar bugs.</span></div>
+          <div class="pipe-vnode-substage"><span><strong>Team manager</strong> — if no similar bugs on this component.</span></div>
+        </div>
       </div>
     </div>
     <div class="pipe-vnode">
@@ -1215,7 +1286,7 @@ PIPELINE_RAIL_HTML = """
     <div class="pipe-vnode-icon endpoint output">out</div>
     <div class="pipe-vnode-text">
       <div class="pipe-vnode-name">Output</div>
-      <div class="pipe-vnode-desc">Jira ticket draft ready for review. A human approves before filing.</div>
+      <div class="pipe-vnode-desc">Ticket saved to the local dashboard on Publish. Status is editable from the Dashboard afterwards.</div>
     </div>
   </div>
 </div>
@@ -1396,10 +1467,18 @@ with col_main:
 if triage_btn:
     use_multi_agent = pipeline_choice.startswith("Multi-agent")
 
+    # Load only what this run actually needs. Multi-agent uses the pre-built
+    # embedding index off disk (no Jira fetch); rule-based needs a live
+    # 300-bug fetch for its TF-IDF index. A multi-agent-only session
+    # therefore never talks to Jira at startup.
     try:
-        rb_engine, host, n_indexed = get_engines()
+        host = get_host_agent()
+        if not use_multi_agent:
+            rb_engine, n_indexed = get_rule_engine_and_count()
+        else:
+            rb_engine, n_indexed = None, 0
     except Exception as e:
-        st.error(f"Could not connect to Jira: {type(e).__name__}: {e}")
+        st.error(f"Could not load pipeline: {type(e).__name__}: {e}")
         st.stop()
 
     pipeline_label = "multi-agent" if use_multi_agent else "rule-based"
@@ -1768,7 +1847,7 @@ if "triage_result" in st.session_state:
         OTHER_OPTION = "(Other — search Jira directly)"
 
         try:
-            host_for_roster = get_engines()[1]
+            host_for_roster = get_host_agent()
             team_roster = host_for_roster.classifier.team_roster or {}
         except Exception:
             team_roster = {}
@@ -1841,11 +1920,9 @@ if "triage_result" in st.session_state:
                 # re-fire the API call on every keystroke.
                 cache_key = f"jira_user_search_{jira_query.strip().lower()}"
                 if cache_key not in st.session_state:
-                    try:
-                        rb_for_search, _, _ = get_engines()
-                    except Exception:
-                        rb_for_search = None
                     # JiraClient lives on the host or can be re-instantiated.
+                    # We don't need the rule engine here — user search just
+                    # goes straight to Jira via a fresh JiraClient.
                     from src.jira_client import JiraClient
                     jc = JiraClient()
                     st.session_state[cache_key] = jc.search_assignable_users(
@@ -2075,6 +2152,17 @@ if "triage_result" in st.session_state:
             # uploaded attachments to data/tickets_attachments/<BUGT-N>/,
             # resets the triage state, and navigates to the dashboard
             # so the reviewer sees the new row immediately.
+            # Compose a single "Reporter" display string from the parser's
+            # two separate fields (reporter_name and reporter_email). The
+            # form's "Reporter" input flows in as `From: <name>` at the top
+            # of the synthesized email → parser puts it into reporter_name.
+            _rep_name  = (getattr(bug, "reporter_name",  None) or "").strip()
+            _rep_email = (getattr(bug, "reporter_email", None) or "").strip()
+            if _rep_name and _rep_email:
+                reporter_display = f"{_rep_name} <{_rep_email}>"
+            else:
+                reporter_display = _rep_name or _rep_email or ""
+
             try:
                 new_key = ticket_db.insert_ticket(
                     fields = {
@@ -2083,7 +2171,7 @@ if "triage_result" in st.session_state:
                         "component":    edited_comp if edited_comp != "bugs" else None,
                         "priority":     edited_prio,
                         "assignee":     edited_owner_clean,
-                        "reporter":     bug.reporter or "",
+                        "reporter":     reporter_display,
                         "duplicate_of": sim.duplicate_of or None,
                     },
                     source_attachment_paths = r.get("image_paths") or [],
