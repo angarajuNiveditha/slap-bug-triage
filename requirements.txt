@@ -6,3 +6,5 @@ python-dotenv>=1.0.0
 scikit-learn>=1.9.0
 streamlit>=1.32.0
 imageio-ffmpeg>=0.4.9         # video keyframe extraction for subagent_media
+sqlalchemy>=2.0.0             # ORM for the local ticket store (MySQL or SQLite)
+pymysql>=1.1.0                # MySQL driver used by SQLAlchemy in production POC
