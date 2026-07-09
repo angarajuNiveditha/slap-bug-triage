@@ -11,8 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from ..agent_parser import BugReport
-from ..claude_cli   import call_claude
+from ..rule_based.agent_parser import BugReport
+from ..shared.claude_cli       import call_claude
 
 
 DUPLICATE_CONFIDENCE_THRESHOLD = 0.80

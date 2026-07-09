@@ -17,7 +17,7 @@ from typing import Optional
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-from .jira_client import JiraClient
+from ..shared.jira_client import JiraClient
 
 # -----------------------------------------------------------------------
 # Thresholds

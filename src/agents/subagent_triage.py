@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import json
 
-from ..agent_parser import BugReport
-from ..agent_scorer import (
+from ..rule_based.agent_parser import BugReport
+from ..rule_based.agent_scorer import (
     PRIORITY_ID_MAP,
     SEVERITY_FOR_PRIORITY,
     SeverityResult,
 )
-from ..claude_cli import call_claude
+from ..shared.claude_cli import call_claude
 
 
 PROMPT_TEMPLATE = """You are the SLAP triage sub-agent. Assign a priority (P0, P1, or P2) to the bug below.

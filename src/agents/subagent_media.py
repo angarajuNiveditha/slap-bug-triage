@@ -36,8 +36,8 @@ from pathlib import Path
 from time import perf_counter
 from typing import Callable, Optional
 
-from ..claude_cli      import call_claude
-from ..genvoy_client   import GeminiUnavailable, gemini_describe_image, is_configured as gemini_configured
+from ..shared.claude_cli    import call_claude
+from ..shared.genvoy_client import GeminiUnavailable, gemini_describe_image, is_configured as gemini_configured
 
 PROJECT_ROOT      = Path(__file__).resolve().parent.parent.parent
 SLAP_CONTEXT_DIR  = PROJECT_ROOT / "slap_context"

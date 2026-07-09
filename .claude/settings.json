@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git rm *)",
+      "Bash(git mv *)",
+      "Bash(git push *)",
+      "Bash(git push)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git filter-branch *)"
+    ]
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  }
+}

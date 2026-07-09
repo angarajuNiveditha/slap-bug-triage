@@ -51,7 +51,7 @@ from sqlalchemy.orm import DeclarativeBase, Session
 
 _DEFAULT_DSN = "mysql+pymysql://root@localhost/slap_triage"
 
-DATA_DIR         = Path(__file__).parent.parent / "data"
+DATA_DIR         = Path(__file__).parent.parent.parent / "data"
 EVENT_LOG_PATH   = DATA_DIR / "tickets_events.csv"
 SNAPSHOT_PATH    = DATA_DIR / "tickets_snapshot.csv"
 ATTACHMENTS_ROOT = DATA_DIR / "tickets_attachments"

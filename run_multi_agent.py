@@ -31,7 +31,7 @@ load_dotenv()
 
 from src.agents.host_agent import HostAgent
 from src.agents.subagent_media import MEDIA_EXTENSIONS
-from src.jira_client import JiraClient
+from src.shared.jira_client import JiraClient
 
 
 BASE_DIR   = Path(__file__).parent

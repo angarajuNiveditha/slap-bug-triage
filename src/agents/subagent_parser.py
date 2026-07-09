@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ..agent_parser import BugReport
-from ..claude_cli   import call_claude
+from ..rule_based.agent_parser import BugReport
+from ..shared.claude_cli       import call_claude
 
 
 PROMPT_TEMPLATE = """You are the SLAP triage parser sub-agent. Read the bug report below and extract structured fields. Reply with ONLY a single JSON object — no markdown fences, no commentary.

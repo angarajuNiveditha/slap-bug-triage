@@ -28,11 +28,11 @@ from dotenv import load_dotenv
 # Load .env before importing src modules
 load_dotenv()
 
-from src.jira_client import JiraClient
-from src.parser import parse_bug_report
-from src.severity_scorer import score_severity
-from src.similarity import SimilarityEngine
-from src.ticket_builder import build_ticket
+from src.shared.jira_client import JiraClient
+from src.sdk.parser import parse_bug_report
+from src.sdk.severity_scorer import score_severity
+from src.sdk.similarity import SimilarityEngine
+from src.sdk.ticket_builder import build_ticket
 
 
 def main():

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ..claude_cli import call_claude
+from ..shared.claude_cli import call_claude
 
 
 PROMPT_TEMPLATE = """You are the SLAP triage consistency-check sub-agent. The reporter filled a structured form with three fields. Decide whether they describe the SAME bug.

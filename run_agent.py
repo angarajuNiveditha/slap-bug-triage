@@ -25,11 +25,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from src.agent_parser import parse_bug_report
-from src.agent_scorer import score_severity
-from src.agent_ticket_builder import build_ticket
-from src.jira_client import JiraClient
-from src.tfidf_similarity import SimilarityEngine
+from src.rule_based.agent_parser import parse_bug_report
+from src.rule_based.agent_scorer import score_severity
+from src.shared.agent_ticket_builder import build_ticket
+from src.shared.jira_client import JiraClient
+from src.rule_based.tfidf_similarity import SimilarityEngine
 
 
 BASE_DIR   = Path(__file__).parent

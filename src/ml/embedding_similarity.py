@@ -24,8 +24,8 @@ from typing import Optional
 
 import numpy as np
 
-from .tfidf_similarity     import SimilarBug
-from .embedding_classifier import _get_model, EmbeddingClassifier
+from ..rule_based.tfidf_similarity import SimilarBug
+from .embedding_classifier         import _get_model, EmbeddingClassifier
 
 JIRA_BASE_URL = os.environ.get("JIRA_BASE_URL", "https://flipkart.atlassian.net")
 

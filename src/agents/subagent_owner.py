@@ -30,8 +30,8 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Optional
 
-from ..claude_cli  import call_claude
-from ..team_config import MANAGER_NAMES, TEAM_MANAGERS
+from ..shared.claude_cli  import call_claude
+from ..shared.team_config import MANAGER_NAMES, TEAM_MANAGERS
 
 
 @dataclass

@@ -13,9 +13,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from .agent_parser import BugReport
-from .agent_scorer import SeverityResult
-from .tfidf_similarity import SimilarityResult
+from ..rule_based.agent_parser     import BugReport
+from ..rule_based.agent_scorer     import SeverityResult
+from ..rule_based.tfidf_similarity import SimilarityResult
 
 # FLIPPI project constants (§10 of API reference)
 FLIPPI_PROJECT_KEY = "FLIPPI"

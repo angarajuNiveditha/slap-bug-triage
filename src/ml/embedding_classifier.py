@@ -65,7 +65,7 @@ HYBRID_CLAUDE_FALLBACK_THRESHOLD = 0.60
 # Architecture skill files — loaded for the top-3 candidate teams when
 # LogReg confidence is borderline. Lets Claude reason over real team
 # ownership / repo structure instead of the generic prompt boilerplate.
-_ARCHITECTURE_DIR = Path(__file__).parent.parent / "slap_context" / "architecture"
+_ARCHITECTURE_DIR = Path(__file__).parent.parent.parent / "slap_context" / "architecture"
 _REPO_SKILLS_DIR  = _ARCHITECTURE_DIR / "repos"
 _REPOS_MANIFEST   = _ARCHITECTURE_DIR / "repos.json"
 
@@ -299,7 +299,7 @@ def _classify_with_claude(
         pass
     return None, ""
 
-DEFAULT_INDEX_PATH = Path(__file__).parent.parent / "data" / "embedding_index.npz"
+DEFAULT_INDEX_PATH = Path(__file__).parent.parent.parent / "data" / "embedding_index.npz"
 
 
 # Map raw Jira component names → the canonical class label we predict.

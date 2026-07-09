@@ -9,17 +9,14 @@ output_claude/
 # overrides. Treat as local-only training data.
 data/corrections.csv
 
-# Local ticket store (see src/db.py). MySQL data files never touch disk
+# Local ticket store (see src/shared/db.py). MySQL data files never touch disk
 # in this repo, but the CSV mirrors do — real bug data, not committed.
 data/tickets.db
 data/tickets_events.csv
 data/tickets_snapshot.csv
-
-# Persistent copies of user-uploaded ticket attachments (screenshots,
-# videos). One folder per BUGT-N key. Real bug media — never committed.
 data/tickets_attachments/
 
-# Cached embedding index (rebuilt by build_embedding_index.py)
+# Cached embedding index (rebuilt by scripts/build_embedding_index.py)
 data/embedding_index.npz
 data/embedding_index_logreg.pkl
 data/embedding_index_team_roster.json

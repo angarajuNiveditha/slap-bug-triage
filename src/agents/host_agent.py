@@ -39,13 +39,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from ..agent_parser         import BugReport
-from ..agent_scorer         import SeverityResult
-from ..agent_ticket_builder import TicketDraft, build_ticket
-from ..tfidf_similarity     import SimilarBug, SimilarityResult
+from ..rule_based.agent_parser     import BugReport
+from ..rule_based.agent_scorer     import SeverityResult
+from ..shared.agent_ticket_builder import TicketDraft, build_ticket
+from ..rule_based.tfidf_similarity import SimilarBug, SimilarityResult
 
-from ..embedding_classifier import EmbeddingClassifier
-from ..embedding_similarity import EmbeddingSimilarityEngine
+from ..ml.embedding_classifier import EmbeddingClassifier
+from ..ml.embedding_similarity import EmbeddingSimilarityEngine
 
 from .subagent_dedup            import DedupResult, decide_duplicate
 from .subagent_form_consistency import check_form_consistency
@@ -327,7 +327,7 @@ class HostAgent:
         # signal. The full top_matches is still stored on the draft so
         # the UI can display it (with a warning) for the reviewer's
         # context.
-        from ..embedding_similarity import RELEVANCE_THRESHOLD
+        from ..ml.embedding_similarity import RELEVANCE_THRESHOLD
         reasoning_matches = [m for m in top_matches if m.similarity >= RELEVANCE_THRESHOLD]
 
         if not reasoning_matches:

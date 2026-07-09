@@ -25,8 +25,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from src.jira_client          import JiraClient
-from src.embedding_classifier import build_index, DEFAULT_INDEX_PATH
+from src.shared.jira_client      import JiraClient
+from src.ml.embedding_classifier import build_index, DEFAULT_INDEX_PATH
 
 
 def main() -> None:

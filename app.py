@@ -36,17 +36,17 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 # ── Pipeline imports ────────────────────────────────────────────────────────
-from src.agent_ticket_builder import build_ticket
-from src.jira_client          import JiraClient
+from src.shared.agent_ticket_builder import build_ticket
+from src.shared.jira_client          import JiraClient
 
 # Rule-based pipeline (instant, text-only)
-from src.agent_parser     import parse_bug_report as rb_parse
-from src.agent_scorer     import (
+from src.rule_based.agent_parser     import parse_bug_report as rb_parse
+from src.rule_based.agent_scorer     import (
     score_severity as rb_score,
     PRIORITY_ID_MAP,
     SEVERITY_FOR_PRIORITY,
 )
-from src.tfidf_similarity import SimilarityEngine as RuleEngine
+from src.rule_based.tfidf_similarity import SimilarityEngine as RuleEngine
 
 # Multi-agent pipeline (Claude Code headless, supports media)
 from src.agents.host_agent      import HostAgent, detect_quality_issues
