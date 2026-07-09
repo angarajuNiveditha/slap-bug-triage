@@ -362,6 +362,20 @@ def list_tickets() -> list[dict]:
         return [_ticket_to_dict(t) for t in rows]
 
 
+def get_ticket(key: str) -> dict | None:
+    """Fetch a single ticket by key (e.g. "BUGT-3") or None if not found.
+    Used by the UI for cross-referencing (e.g. showing a "possible
+    regression" warning when the current bug duplicates a Closed local
+    ticket). Cheap — single indexed lookup."""
+    if not key:
+        return None
+    init_db()
+    engine = _get_engine()
+    with Session(engine) as session:
+        t = session.query(Ticket).filter_by(key=key).first()
+        return _ticket_to_dict(t) if t else None
+
+
 def persist_attachments(ticket_key: str, source_paths: list) -> list:
     """Copy uploaded attachments (typically living in a tempdir from
     save_uploads_to_tmp) into a persistent per-ticket folder under

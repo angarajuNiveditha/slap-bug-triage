@@ -978,17 +978,24 @@ def render_triage_md(triage: dict) -> str:
                 "",
             ]
         lines += [
-            "| Jira Key | Priority | Similarity | Assignee | Summary |",
+            "| Key | Priority | Similarity | Assignee | Summary |",
             "|---|---|---|---|---|",
         ]
         for s in similar:
             key      = s.get("key", "")
-            url      = s.get("url") or f"{JIRA_BASE_URL}/browse/{key}"
             priority = s.get("priority", "—")
             sim      = s.get("similarity", 0.0)
             assignee = s.get("assignee") or "_(unassigned)_"
             summary  = (s.get("summary") or "").replace("|", "\\|")
-            lines.append(f"| [{key}]({url}) | {priority} | {sim:.3f} | {assignee} | {summary} |")
+            # BUGT-* keys are local tickets — no Jira link, prefix with the
+            # 🏠 badge to make the source obvious at a glance. FLIPPI-*
+            # (and any other prefix) is a live Jira link as before.
+            if key.startswith("BUGT-"):
+                key_cell = f"🏠 `{key}`"
+            else:
+                url = s.get("url") or f"{JIRA_BASE_URL}/browse/{key}"
+                key_cell = f"[{key}]({url})"
+            lines.append(f"| {key_cell} | {priority} | {sim:.3f} | {assignee} | {summary} |")
         lines.append("")
 
     return "\n".join(lines)
@@ -1966,19 +1973,40 @@ if "triage_result" in st.session_state:
 
     with mc4:
         # Duplicate-of — read-only tile (no editable widget, the dedup
-        # decision is the model's, not the reviewer's).
+        # decision is the model's, not the reviewer's). Local BUGT-*
+        # keys get a 🏠 badge instead of a Jira link.
+        _dup_key   = sim.duplicate_of or ""
+        _is_local  = _dup_key.startswith("BUGT-")
+        _tile_val  = (f"🏠 {_dup_key}" if _is_local else _dup_key) if _dup_key else "—"
         st.markdown(
             f"""
             <div class="static-tile">
               <div class="static-tile-label">Duplicate of</div>
-              <div class="static-tile-value">{html.escape(str(dup_v))}</div>
+              <div class="static-tile-value">{html.escape(_tile_val)}</div>
               <div class="static-tile-sub">{html.escape(dup_sub)}</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        if sim.duplicate_of:
-            st.markdown(f"🔗 [Open]({JIRA_BASE_URL}/browse/{sim.duplicate_of})")
+        if _dup_key:
+            if _is_local:
+                # Local ticket — check its status and warn if this looks
+                # like a possible regression against a Closed / Done bug.
+                _dup_row = None
+                try:
+                    _dup_row = ticket_db.get_ticket(_dup_key)
+                except Exception:
+                    pass
+                if _dup_row and _dup_row.get("status") in ("Closed", "Done"):
+                    st.warning(
+                        f"⚠ Possible regression — {_dup_key} was marked "
+                        f"**{_dup_row['status']}**. Verify with the fixer "
+                        f"before re-opening or filing.",
+                        icon="🔁",
+                    )
+                st.caption("Open the Dashboard to inspect this local ticket.")
+            else:
+                st.markdown(f"🔗 [Open]({JIRA_BASE_URL}/browse/{_dup_key})")
 
     # ── Patch draft so JSON downloads at the bottom reflect overrides ─────
     edited_owner_clean = (edited_owner.strip() if edited_owner else None) or None
