@@ -134,12 +134,8 @@ def main() -> None:
     me   = jira.whoami()
     print(f"  Connected as: {me.get('displayName')} <{me.get('emailAddress')}>")
 
-    print("\n[setup] Fetching 300 historical FLIPPI bugs...")
-    issues = jira.fetch_recent_bugs(limit=300)
-
-    print("[setup] Building embeddings index in host agent...")
+    print("[setup] Loading embedding index from disk...")
     host = HostAgent()
-    host.build_index(issues)
 
     ok, fail = 0, 0
     for label, text, images in bugs:

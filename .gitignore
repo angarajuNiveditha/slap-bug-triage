@@ -55,18 +55,5 @@ venv/
 # PNGs). Now COMMITTED so the media sub-agent has its visual reference set
 # right after a clone, without needing access to the Figma source.
 
-# Bug attachment images + videos — gitignored because the demo copies them
-# from slap_context (unreleased designs) and the video recordings can be
-# large. The email.txt files inside data/bug_with_media/ ARE committed;
-# only the media stays local.
-data/bug_with_media/**/*.png
-data/bug_with_media/**/*.jpg
-data/bug_with_media/**/*.jpeg
-data/bug_with_media/**/*.webp
-data/bug_with_media/**/*.gif
-data/bug_with_media/**/*.mp4
-data/bug_with_media/**/*.mov
-data/bug_with_media/**/*.webm
-data/bug_with_media/**/*.avi
-data/bug_with_media/**/*.mkv
-data/bug_with_media/**/*.m4v
+# Bug attachment images + videos — committed as demo fixtures so the
+# multi-modal test cases work right after a clone.
