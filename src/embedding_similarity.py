@@ -136,93 +136,195 @@ class EmbeddingSimilarityEngine:
         recall_k: int = RECALL_K,
     ) -> EmbeddingSimilarityResult:
         """
-        Two-stage similarity search — the intended default for the
-        multi-agent pipeline.
+        Two-stage similarity search over BOTH the Jira embedding index AND
+        the local ticket store — the intended default for the multi-agent
+        pipeline.
 
-          Stage 1 (recall):  cosine over the embedding index → top-`recall_k`.
-                             Fast (~200 µs) and high-recall — designed to
-                             include the true best matches even if they
-                             aren't ranked #1.
-          Stage 2 (rerank):  cross-encoder rescores the recall set with
-                             joint attention across query + candidate,
-                             then returns the top-`top_k`. Slower per pair
-                             (~5-15 ms) but only runs on `recall_k` pairs
-                             (~150-450 ms total for recall_k=30).
+          Stage 1 (recall):  cosine over the Jira index (top-`recall_k`)
+                             PLUS cosine over every embedding in the local
+                             ticket store (see src/db.py). Both are fast
+                             (~200 µs for Jira, negligible for the local
+                             store which is small).
+          Stage 2 (rerank):  cross-encoder rescores the merged pool with
+                             joint attention across (query, candidate),
+                             then returns the top-`top_k`.
+
+        Local tickets appear alongside Jira tickets in the same ranking,
+        so a recently-Published BUGT ticket that duplicates the new bug
+        will surface even if the Jira corpus doesn't contain it.
 
         The returned SimilarBug objects carry the cross-encoder-derived
-        score in `.similarity` (sigmoid-normalised to [0, 1] so it's
-        comparable across queries), and are ordered by that score.
+        score in `.similarity` (sigmoid-normalised to [0, 1]) and are
+        ordered by that score. `is_duplicate_candidate` tracks the RAW
+        COSINE similarity vs DUPLICATE_THRESHOLD (0.80) — the threshold
+        is calibrated for cosine and downstream dedup logic depends on
+        that scale.
 
-        `is_duplicate_candidate` still tracks the RAW COSINE similarity
-        vs DUPLICATE_THRESHOLD — the threshold is calibrated for cosine
-        and downstream dedup logic depends on that scale.
-
-        Falls back to `find_similar(top_k=top_k)` if the cross-encoder
-        model can't be loaded (offline first run, disk full, etc.).
+        Falls back gracefully when the cross-encoder can't be loaded
+        (returns merged cosine ranking) or when the local store can't
+        be reached (returns Jira-only results, unchanged from previous
+        behaviour).
         """
         clf   = self._clf
         model = _get_model()
 
-        # ── Stage 1: cosine recall ─────────────────────────────────
+        # ── Encode the query once — both sources compare against it. ──
         t0 = time.perf_counter()
         q = model.encode([text], normalize_embeddings=True).astype(np.float32)[0]
-        sims    = clf.embeddings @ q
-        # Guard: if the corpus is small, don't ask for more than exists.
-        k       = min(recall_k, clf.n)
-        top_idx = np.argpartition(-sims, kth=min(k, clf.n - 1))[:k]
-        top_idx = top_idx[np.argsort(-sims[top_idx])]
+
+        # ── Stage 1a: Jira cosine recall ─────────────────────────────
+        sims_jira = clf.embeddings @ q
+        k_jira    = min(recall_k, clf.n)
+        jira_idx  = np.argpartition(-sims_jira, kth=min(k_jira, clf.n - 1))[:k_jira]
+        jira_idx  = jira_idx[np.argsort(-sims_jira[jira_idx])]
+
+        candidates: list[dict] = []
+        for i in jira_idx:
+            cos = float(sims_jira[i])
+            text_i = str(clf.texts[i]) if clf.texts is not None else ""
+            candidates.append({
+                "source":     "jira",
+                "text":       text_i,
+                "cosine":     cos,
+                "sb_kwargs":  self._sb_kwargs_from_jira_idx(int(i)),
+            })
+
+        # ── Stage 1b: local ticket cosine recall ─────────────────────
+        # Deliberately swallow errors — if the local store isn't reachable
+        # (fresh install, DB migration in progress, etc.), we still want
+        # the Jira results to flow through.
+        try:
+            from . import db as ticket_db
+            local_hits = ticket_db.local_similar(q, top_k=recall_k)
+        except Exception as e:
+            print(f"  [similarity] local store unavailable ({e}); Jira-only ranking")
+            local_hits = []
+
+        for hit in local_hits:
+            cos = float(hit["similarity"])
+            candidates.append({
+                "source":    "local",
+                "text":      "\n".join(filter(None, [hit.get("summary"), hit.get("description")])),
+                "cosine":    cos,
+                "sb_kwargs": {
+                    "key":       hit["key"],
+                    "summary":   hit["summary"] or "",
+                    "assignee":  hit.get("assignee") or None,
+                    "priority":  hit.get("priority") or "Unknown",
+                    "url":       "",                       # local — no external link
+                    "component": hit.get("component") or None,
+                },
+            })
         recall_ms = (time.perf_counter() - t0) * 1000
 
-        # If we can't rerank meaningfully (tiny corpus or user asked for
-        # more than we have), just return the cosine ranking as-is.
-        if len(top_idx) <= top_k:
-            matches = [self._build_match(i, float(sims[i])) for i in top_idx]
+        n_jira, n_local = len(jira_idx), len(local_hits)
+
+        # If we have too few to bother reranking (tiny corpus / empty),
+        # just sort by raw cosine and return.
+        if len(candidates) <= top_k:
+            candidates.sort(key=lambda c: -c["cosine"])
+            matches = [self._sb_from_candidate(c, similarity=c["cosine"]) for c in candidates]
+            print(
+                f"  [similarity] merged {n_jira} Jira + {n_local} local candidates in "
+                f"{recall_ms:.1f}ms (below rerank threshold; returned by cosine)"
+            )
             return _make_result(matches)
 
-        # ── Stage 2: cross-encoder rerank ──────────────────────────
+        # ── Stage 2: cross-encoder rerank of the MERGED pool ─────────
         try:
             ce = _get_cross_encoder()
         except Exception as e:
-            print(f"  [similarity] cross-encoder unavailable ({e}); returning cosine top-{top_k}")
-            top_idx = top_idx[:top_k]
-            matches = [self._build_match(i, float(sims[i])) for i in top_idx]
+            print(f"  [similarity] cross-encoder unavailable ({e}); returning merged cosine top-{top_k}")
+            candidates.sort(key=lambda c: -c["cosine"])
+            matches = [self._sb_from_candidate(c, similarity=c["cosine"]) for c in candidates[:top_k]]
             return _make_result(matches)
 
-        # Build (query, candidate_text) pairs for the recall set.
-        pairs = []
-        for i in top_idx:
-            candidate_text = str(clf.texts[i]) if clf.texts is not None else ""
-            pairs.append((text, candidate_text))
+        pairs = [(text, c["text"]) for c in candidates]
 
         t1 = time.perf_counter()
-        ce_scores = ce.predict(pairs, show_progress_bar=False)   # shape (recall_k,)
+        ce_scores = ce.predict(pairs, show_progress_bar=False)   # shape (N,)
         rerank_ms = (time.perf_counter() - t1) * 1000
 
-        # Sort the recall set by cross-encoder score (descending) and take top-k.
-        order       = np.argsort(-ce_scores)[:top_k]
-        winning_idx = top_idx[order]                 # indices back into the corpus
-        winning_ce  = ce_scores[order]               # raw CE scores in ranked order
-        winning_cos = sims[winning_idx]              # original cosine for the threshold check
+        # Sort by cross-encoder score, take top_k, build final SimilarBugs.
+        order = np.argsort(-ce_scores)[:top_k]
 
-        # Sigmoid-normalise the raw CE scores into [0, 1] so downstream code
-        # comparing "similarity" values (e.g. _closest_manager_owner in
-        # subagent_owner) gets a bounded, monotonic signal.
         matches = []
-        for i, ce_raw, cos_raw in zip(winning_idx, winning_ce, winning_cos):
-            ce_norm = 1.0 / (1.0 + math.exp(-float(ce_raw)))
-            matches.append(self._build_match(
-                idx        = int(i),
+        for i in order:
+            c        = candidates[int(i)]
+            ce_raw   = float(ce_scores[int(i)])
+            ce_norm  = 1.0 / (1.0 + math.exp(-ce_raw))
+            matches.append(self._sb_from_candidate(
+                c,
                 similarity = ce_norm,
-                is_dup     = bool(cos_raw >= DUPLICATE_THRESHOLD),
+                # is_duplicate_candidate is a threshold check on RAW
+                # cosine (calibrated), not the rerank score.
+                is_dup     = c["cosine"] >= DUPLICATE_THRESHOLD,
             ))
 
+        n_jira_kept  = sum(1 for i in order if candidates[int(i)]["source"] == "jira")
+        n_local_kept = len(order) - n_jira_kept
         print(
-            f"  [similarity] cosine recall {len(top_idx)} in {recall_ms:.1f}ms; "
-            f"cross-encoder rerank in {rerank_ms:.1f}ms → top-{top_k}"
+            f"  [similarity] cosine recall {n_jira} Jira + {n_local} local in "
+            f"{recall_ms:.1f}ms; cross-encoder rerank over {len(candidates)} pairs "
+            f"in {rerank_ms:.1f}ms → top-{top_k} "
+            f"({n_jira_kept} Jira, {n_local_kept} local)"
         )
         return _make_result(matches)
 
     # ── Internal ────────────────────────────────────────────────────
+
+    def _sb_kwargs_from_jira_idx(self, idx: int) -> dict:
+        """Extract the source-agnostic SimilarBug fields from a Jira
+        embedding-index row. Called by find_similar_with_rerank when
+        assembling the merged (Jira + local) candidate pool.
+
+        Deliberately does NOT include `similarity` or
+        `is_duplicate_candidate` — those get filled in by
+        _sb_from_candidate after the rerank."""
+        clf = self._clf
+        key      = str(clf.keys[idx])
+        summary  = ""
+        assignee = None
+        priority = "Unknown"
+        label    = str(clf.labels[idx])
+        if clf.texts is not None:
+            summary = str(clf.texts[idx]).split("\n", 1)[0]
+        if clf.assignees is not None:
+            a = str(clf.assignees[idx])
+            assignee = a if a else None
+        if clf.priorities is not None:
+            priority = str(clf.priorities[idx]) or "Unknown"
+        return {
+            "key":       key,
+            "summary":   summary,
+            "assignee":  assignee,
+            "priority":  priority,
+            "url":       f"{JIRA_BASE_URL}/browse/{key}" if key else "",
+            "component": label,
+        }
+
+
+    def _sb_from_candidate(
+        self,
+        candidate: dict,
+        similarity: float,
+        is_dup:     Optional[bool] = None,
+    ) -> SimilarBug:
+        """Build a SimilarBug from a unified-pool candidate dict, using
+        the caller-provided similarity (post-rerank sigmoid, or raw
+        cosine when the rerank stage was skipped). is_duplicate_candidate
+        defaults to `similarity >= DUPLICATE_THRESHOLD` for the cosine
+        case, but callers pass an explicit `is_dup` after rerank so the
+        threshold is checked on the RAW COSINE (calibrated), not the
+        rerank score."""
+        return SimilarBug(
+            similarity             = round(float(similarity), 3),
+            is_duplicate_candidate = (
+                is_dup if is_dup is not None else similarity >= DUPLICATE_THRESHOLD
+            ),
+            **candidate["sb_kwargs"],
+        )
+
 
     def _build_match(
         self,
