@@ -754,13 +754,6 @@ def get_rule_engine_and_count() -> tuple[RuleEngine, int]:
     return rb, len(issues)
 
 
-def get_engines() -> tuple[RuleEngine, HostAgent, int]:
-    """Backwards-compatible shim — some call sites still ask for both
-    engines at once. The two @st.cache_resource loaders behind this are
-    still lazy, so multi-agent-only paths never trigger the Jira fetch."""
-    rb, n_indexed = get_rule_engine_and_count()
-    host          = get_host_agent()
-    return rb, host, n_indexed
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -2060,9 +2053,9 @@ if "triage_result" in st.session_state:
         draft.triage_notes["human_overrides"] = overrides
 
     # ── Tabs ────────────────────────────────────────────────────────────────
-    # Raw JSON tab dropped — the download-JSON button now lives in Step 3
-    # (next to Publish) since the DB dashboard is the primary "where did
-    # this ticket go?" surface, not a JSON blob.
+    # Raw JSON tab dropped — the local ticket store (data/tickets.db plus
+    # the CSV mirrors) is the primary "where did this ticket go?" surface
+    # now. A reviewer who wants JSON can inspect tickets_snapshot.csv.
 
     tab_names = ["Findings"]
     if use_multi_agent and media and media.findings:
@@ -2145,16 +2138,13 @@ if "triage_result" in st.session_state:
                 st.divider()
         idx += 1
 
-    # (Raw JSON tab removed 2026-07. The download-JSON button now lives
-    # under Step 3 next to Publish — the DB dashboard is the primary
-    # "where did this ticket go?" surface now, not a JSON blob view.)
-
-    # ── Approve & Publish (prototype demo) ─────────────────────────────────
-    # Approve gates Publish-to-Jira. Publish itself is intentionally a no-op
-    # in this prototype — the project's hard constraint is read-only Jira,
-    # so the button exists only to demonstrate where production wiring would
-    # plug in. State is per-bug via st.session_state, reset on every fresh
-    # triage by the cleanup loop above.
+    # ── Approve & Publish ──────────────────────────────────────────────────
+    # Approve gates the Publish button. Publish writes the ticket to the
+    # local DB (data/tickets.db via SQLAlchemy), copies uploaded
+    # attachments under data/tickets_attachments/<BUGT-N>/, appends an
+    # INSERT event to tickets_events.csv, and navigates to the dashboard.
+    # State is per-bug via st.session_state, reset on every fresh triage
+    # by the cleanup loop above.
 
     st.markdown('<div class="section-label">Step 3 · Approve &amp; file</div>', unsafe_allow_html=True)
 
