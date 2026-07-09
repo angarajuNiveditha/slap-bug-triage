@@ -94,6 +94,14 @@ class Ticket(Base):
     created      = Column(DateTime, nullable=False)
     updated      = Column(DateTime, nullable=False)
 
+    # Cached mpnet embedding of (summary + description) as a JSON list
+    # of 768 float32s. Computed at insert time so the local ticket store
+    # can participate in the similarity engine's dedup search alongside
+    # the Jira embedding index. NULL for tickets inserted before this
+    # column existed --- backfilled lazily by backfill_missing_embeddings()
+    # on the first search after upgrade.
+    embedding    = Column(Text)
+
 
 # ── Engine (lazy, module-level singleton) ──────────────────────────────────
 
@@ -118,6 +126,130 @@ def init_db() -> None:
     to call at import time or on every request."""
     engine = _get_engine()
     Base.metadata.create_all(engine)
+    # Additive migration: add the `embedding` column to a pre-existing
+    # tickets table (upgrade from a version that didn't have it).
+    # SQLAlchemy's create_all() only creates missing tables, not columns.
+    from sqlalchemy import inspect, text
+    insp = inspect(engine)
+    if "tickets" in insp.get_table_names():
+        cols = {c["name"] for c in insp.get_columns("tickets")}
+        if "embedding" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE tickets ADD COLUMN embedding TEXT"))
+
+
+# ── Embedding helpers ──────────────────────────────────────────────────────
+#
+# Reuse the same mpnet encoder the classifier + Jira similarity index use,
+# so a local ticket's embedding is directly comparable via cosine to any
+# vector in data/embedding_index.npz. The encoder lives in
+# embedding_classifier._get_model() as a module-level singleton, so the
+# first call has a ~5-10s cold load and every subsequent call is instant.
+
+def _encode_text_to_json(text: str) -> str | None:
+    """Encode `text` with mpnet (L2-normalised, 768 dim) and return a
+    JSON string of the vector. Returns None on empty/whitespace text or
+    if the encoder can't be loaded (offline first-run, etc.).
+
+    Not called on the request-serving hot path --- only at insert time
+    and during backfill. Safe to fail: the returned None just means the
+    ticket won't participate in the similarity search until we can
+    encode it later."""
+    if not text or not text.strip():
+        return None
+    try:
+        from .embedding_classifier import _get_model
+        import numpy as np
+        model = _get_model()
+        vec = model.encode([text], normalize_embeddings=True).astype(np.float32)[0]
+        return json.dumps(vec.tolist())
+    except Exception:
+        return None
+
+
+def _search_text_for(summary: str, description: str) -> str:
+    """The text we embed for a ticket. Matches the format that
+    build_embedding_index.py uses for the 564-bug Jira corpus --- title
+    then description, one blank line between --- so cosine distances
+    are directly comparable across the two corpora."""
+    parts = [(summary or "").strip(), (description or "").strip()]
+    return "\n".join(p for p in parts if p)
+
+
+def backfill_missing_embeddings() -> int:
+    """Encode + store the embedding for any ticket rows where it's NULL.
+    Returns the number of rows backfilled. Safe to call from search-time
+    code paths; idempotent."""
+    init_db()
+    engine = _get_engine()
+    with Session(engine) as session:
+        pending = session.query(Ticket).filter(Ticket.embedding.is_(None)).all()
+        if not pending:
+            return 0
+        n = 0
+        for t in pending:
+            emb_json = _encode_text_to_json(_search_text_for(t.summary, t.description))
+            if emb_json is None:
+                continue     # encoder unavailable, try again next time
+            t.embedding = emb_json
+            n += 1
+        session.commit()
+    return n
+
+
+def local_similar(query_embedding, top_k: int) -> list[dict]:
+    """Cosine search over the local ticket store.
+
+    `query_embedding` is a 1-D numpy array of shape (768,), L2-normalised
+    (i.e. produced by the same mpnet encoder). Returns a list of dicts
+    with the shape:
+
+        {
+          "key":       "BUGT-3",
+          "summary":   "...",
+          "priority":  "P1",
+          "assignee":  "Divya",
+          "component": "Backend",
+          "status":    "Open",
+          "similarity": 0.87,
+        }
+
+    Sorted by similarity DESC, capped at `top_k`. Returns [] when the
+    store is empty or no embeddings could be loaded."""
+    import numpy as np
+
+    # Make sure old rows have embeddings before we compare.
+    backfill_missing_embeddings()
+
+    init_db()
+    engine = _get_engine()
+    with Session(engine) as session:
+        rows = (
+            session.query(Ticket)
+            .filter(Ticket.embedding.isnot(None))
+            .all()
+        )
+        if not rows:
+            return []
+        matrix = np.array(
+            [json.loads(t.embedding) for t in rows],
+            dtype=np.float32,
+        )
+        sims = matrix @ query_embedding    # (N,) --- L2-normalised → cosine
+
+        n     = min(top_k, len(rows))
+        order = np.argsort(-sims)[:n]
+
+        return [{
+            "key":        rows[i].key,
+            "summary":    rows[i].summary,
+            "description": rows[i].description or "",
+            "priority":   rows[i].priority or "",
+            "assignee":   rows[i].assignee,
+            "component":  rows[i].component or "",
+            "status":     rows[i].status,
+            "similarity": float(sims[i]),
+        } for i in order]
 
 
 # ── Public API ─────────────────────────────────────────────────────────────
@@ -152,10 +284,19 @@ def insert_ticket(fields: dict, source_attachment_paths: list = None) -> str:
             persistent = persist_attachments(key, source_attachment_paths)
             fields = {**fields, "media_paths": persistent}
 
+        summary_val = (fields.get("summary") or "")[:500]
+        desc_val    = fields.get("description") or ""
+
+        # Compute the mpnet embedding synchronously so this ticket can
+        # be found by future similarity searches immediately (no need
+        # to wait for backfill). mpnet is warm from the triage that
+        # just ran, so this costs ~7ms on the happy path.
+        embedding_json = _encode_text_to_json(_search_text_for(summary_val, desc_val))
+
         ticket = Ticket(
             key          = key,
-            summary      = (fields.get("summary") or "")[:500],
-            description  = fields.get("description") or "",
+            summary      = summary_val,
+            description  = desc_val,
             status       = DEFAULT_STATUS,
             component    = fields.get("component") or None,
             priority     = fields.get("priority") or None,
@@ -165,6 +306,7 @@ def insert_ticket(fields: dict, source_attachment_paths: list = None) -> str:
             media_paths  = json.dumps(fields.get("media_paths") or []),
             created      = now,
             updated      = now,
+            embedding    = embedding_json,
         )
         session.add(ticket)
         session.commit()
