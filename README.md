@@ -444,14 +444,20 @@ Accessible from the **📋 Dashboard (N)** button in the top-right nav (N
 is the current count of stored tickets). A separate full-page view — the
 triage input columns are not shown.
 
-```
+| Column | Notes |
+|---|---|
+| **Key** | Auto-assigned `BUGT-N` (local store; not a Jira key) |
+| **Summary** | Bug title from the triage result |
+| **Status** | Inline editable: `New` → `In Review` → `Escalated` → `Resolved` → `Closed` — changes write to DB immediately |
+| **Assignee** | Suggested owner from the triage result |
+| **Priority** | P0 / P1 / P2 from the triage result |
+| **Reporter** | From the bug report |
+| **Created / Updated** | Timestamps managed by the DB |
 
-- **Key** — auto-assigned `BUGT-N` (local store; not a Jira key)
-- **Status** — inline editable dropdown: `New` → `In Review` → `Escalated` → `Resolved` → `Closed`. Changes are written back to the DB immediately on save.
-- All other columns are read-only in the table.
-- If a locally stored ticket is flagged as a duplicate of an incoming bug, the triage view shows a `🏠 BUGT-N` badge and warns if that ticket's status is already Resolved or Closed.
+If a locally stored ticket is flagged as a duplicate of an incoming bug, the triage view shows a `🏠 BUGT-N` badge and warns if that ticket's status is already Resolved or Closed.
 
 ---
+
 ## Production mapping
 
 Every prototype component has a direct production equivalent:
