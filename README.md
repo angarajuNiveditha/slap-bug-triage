@@ -321,25 +321,24 @@ cp .env.example .env
 Open `.env` and fill in:
 
 ```ini
-# Jira (required for both pipelines)
+# REQUIRED
 JIRA_EMAIL=your.email@flipkart.com
-JIRA_TOKEN=your_atlassian_api_token
+JIRA_TOKEN=your_atlassian_api_token_here
 JIRA_BASE_URL=https://flipkart.atlassian.net
 JIRA_PROJECT=FLIPPI
-
-# Anthropic API key — only needed for main.py (blocked on corp network)
-ANTHROPIC_API_KEY=
-
-# Local ticket store — SQLite is zero-setup; MySQL is the production POC
 DATABASE_URL=sqlite:///data/tickets.db
-# DATABASE_URL=mysql+pymysql://root@localhost/slap_triage
 
-# Flipkart internal Gemini proxy (optional — media sub-agent fast path)
-GENVOY_TOKEN=your_genvoy_jwt_here
-APIM_SUBSCRIPTION_KEY=your_apim_key_here
+# OPTIONAL — media sub-agent Gemini fast path (falls back to Claude if absent)
+GEMINI_API_URL=
+GEMINI_API_KEY=
+GENVOY_TOKEN=
 
-# GitHub Enterprise token (optional — enables repo_context.py code search)
-GITHUB_FK_TOKEN=your_github_enterprise_token
+# OPTIONAL — re-generate architecture skill files from live SLAP repos
+GITHUB_FK_TOKEN=
+GITHUB_FK_ORG=flipkart-incubator
+
+# OPTIONAL — main.py SDK reference pipeline only (blocked on corp network)
+ANTHROPIC_API_KEY=
 ```
 
 Verify your Jira credentials work:
