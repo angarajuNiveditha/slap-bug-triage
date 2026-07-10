@@ -490,3 +490,5 @@ These are deliberate product decisions, not limitations:
 5. **No P3 in the multi-agent pipeline.** Vague reports trigger a refile
    banner in the UI — the sub-agents are not asked to guess intent from
    incomplete inputs.
+6. **Input in UI** Input is filled in the UI, automated input from email is not implemented yet.
+   
