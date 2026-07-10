@@ -31,10 +31,13 @@ were split and the model isn't sure; we route to manual triage.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 import numpy as np
 
@@ -273,7 +276,7 @@ def _classify_with_claude(
     Never raises.
     """
     try:
-        from .claude_cli import call_claude
+        from ..shared.claude_cli import call_claude
         truncated = (text or "")[:3500]
 
         if top_candidates:
@@ -290,13 +293,17 @@ def _classify_with_claude(
             prompt = _CLAUDE_COMPONENT_PROMPT.format(text=truncated)
 
         response = call_claude(prompt, expect_json=True, timeout=90)
-        if isinstance(response, dict):
-            comp = str(response.get("component", "")).strip()
-            reasoning = str(response.get("reasoning") or "").strip()
-            if comp in _VALID_COMPONENTS:
-                return comp, reasoning
-    except Exception:
-        pass
+        if not isinstance(response, dict):
+            logger.warning("Claude fallback returned non-dict: %r", response)
+            return None, ""
+        comp = str(response.get("component", "")).strip()
+        reasoning = str(response.get("reasoning") or "").strip()
+        if comp not in _VALID_COMPONENTS:
+            logger.warning("Claude fallback returned unknown component: %r", comp)
+            return None, ""
+        return comp, reasoning
+    except Exception as e:
+        logger.warning("Claude fallback failed: %s", e)
     return None, ""
 
 DEFAULT_INDEX_PATH = Path(__file__).parent.parent.parent / "data" / "embedding_index.npz"
@@ -362,7 +369,7 @@ def _bug_text(issue: dict) -> str:
         return f"{summary}\n{desc}".strip()
 
     # Real Jira issues: hand off to JiraClient's ADF/HTML extractor.
-    from .jira_client import JiraClient
+    from ..shared.jira_client import JiraClient
     summary = fields.get("summary") or ""
     body    = JiraClient.extract_text(issue) or ""
     if body.startswith(summary):
@@ -381,7 +388,7 @@ def build_index(
 
     Returns a dict summary: counts per label and skipped reasons.
     """
-    from .jira_client import JiraClient
+    from ..shared.jira_client import JiraClient
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -463,7 +470,7 @@ def build_index(
     # don't pollute the routing pool, and with known managers stripped so
     # the owner sub-agent doesn't suggest them for individual bugs.
     from collections import Counter
-    from .team_config import MANAGER_NAMES
+    from ..shared.team_config import MANAGER_NAMES
     MIN_ROSTER_BUGS = 2
     roster: dict[str, list] = {}
     for label, assignee in zip(labels, assignees):

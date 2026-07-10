@@ -18,12 +18,15 @@ from __future__ import annotations
 import base64
 import html
 import json
+import logging
 import os
 import re
 import tempfile
 import time
 from pathlib import Path
 from typing import Optional
+
+logging.basicConfig(level=logging.WARNING, format="%(name)s %(levelname)s: %(message)s")
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -66,8 +69,8 @@ DATA_DIR      = Path(__file__).parent / "data"
 #
 # The set lives in src/team_config.py so both this UI and the classifier's
 # roster-derivation step read the same source of truth. Extend it there.
-from src.team_config import MANAGER_NAMES
-from src import db as ticket_db
+from src.shared.team_config import MANAGER_NAMES
+from src.shared import db as ticket_db
 
 # ── Editable-output config ─────────────────────────────────────────────────
 # These power the override widgets that appear under the metric tiles so a
@@ -884,11 +887,19 @@ def render_triage_md(triage: dict) -> str:
     clf_probas      = classifier_info.get("probabilities") or {}
     clf_neighbours  = classifier_info.get("top_neighbours") or []
 
-    if clf_method.startswith("logreg") and not clf_method.endswith("low-conf"):
+    if clf_method == "logreg":
         component_reason_cell = (
             f"Direct prediction from the embedding classifier at "
             f"**{clf_confidence:.0%}** confidence — high enough that the Claude "
             f"fallback wasn't needed."
+        )
+    elif clf_method.startswith("logreg-claude-unreachable"):
+        component_reason_cell = (
+            f"Embedding classifier predicted this component at "
+            f"**{clf_confidence:.0%}** confidence — below the 60% threshold, "
+            f"so the Claude fallback was attempted but couldn't be reached "
+            f"(likely a concurrent session lock). Falling back to the LogReg "
+            f"prediction."
         )
     elif clf_reasoning:
         # Borderline → Claude+skills decided. Show the full distribution +

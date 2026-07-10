@@ -349,6 +349,20 @@ def update_status(key: str, new_status: str) -> None:
     _rewrite_snapshot()
 
 
+def delete_ticket(key: str) -> None:
+    """Permanently delete a ticket and refresh the snapshot. Raises ValueError
+    if the key is unknown."""
+    init_db()
+    engine = _get_engine()
+    with Session(engine) as session:
+        ticket = session.query(Ticket).filter_by(key=key).first()
+        if ticket is None:
+            raise ValueError(f"No ticket with key {key!r}")
+        session.delete(ticket)
+        session.commit()
+    _rewrite_snapshot()
+
+
 def list_tickets() -> list[dict]:
     """Return every ticket as a dict, sorted by created DESC (newest first)."""
     init_db()

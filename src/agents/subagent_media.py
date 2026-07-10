@@ -253,17 +253,21 @@ For EACH attachment, produce a JSON object with this exact shape:
   "one_line_summary": "Single sentence that captures the bug evidence from this image."
 }}
 
-CONTRADICTION DETECTION (very important)
-Compare what the email describes to what the vision description actually shows, and set `contradicts_email_claim` AGGRESSIVELY. Set it to a one-sentence description of the mismatch in any of these cases:
+CONTRADICTION DETECTION
+Flag `contradicts_email_claim` for clear content mismatches only — not for minor presentation differences. Use this two-part test:
 
-  • The image shows a different SLAP screen / feature than the one the email is about.
-    Example: email is about "Checkout / Proceed to Pay crash" but the image shows "Phone login / OTP" — contradicts_email_claim should say "Email reports a checkout-flow crash but the attached image is the phone-login screen with an OTP error — different feature areas."
+  FLAG (set to a one-sentence description of the mismatch) when:
+  • The image is on a completely different screen/feature than the one the email is about.
+    Example: email reports a "preference-save toast error on Quick one for you bottomsheet" but the image shows a normal product-results grid with no bottomsheet or error visible.
+    Example: email reports a "Checkout crash" but the image shows the Phone-login/OTP screen.
+  • The email explicitly describes a visible error, wrong value, or broken UI element, but the image shows a completely normal/healthy state with none of that visible.
+    Example: email says "₹0 price shown for Muesli" but image shows correct non-zero prices.
+  • The email explicitly states one platform (Android/iOS) and the image unmistakably shows the other platform's UI chrome.
 
-  • The image shows no anomaly / a normal happy-path state while the email claims something is broken.
-  • The image shows a different platform than the email states (e.g. email says Android, image shows iOS — or vice versa).
-  • The image's visible error message or symptom does not match the symptom the email describes.
-
-Only set `contradicts_email_claim` to null when the image evidence clearly supports or is plausibly relevant to what the email is describing. When in doubt, FLAG IT — a triage analyst can override a false flag, but a missed contradiction wastes engineering time on the wrong bug.
+  DO NOT FLAG for:
+  • Image orientation (landscape vs portrait of the same screen).
+  • Image shows the correct screen/feature but at a different moment (e.g. before the toast appeared) — as long as the screen itself matches the bug location.
+  • Any uncertainty — if it could go either way, leave `contradicts_email_claim` null.
 
 Reply with ONLY a JSON object of the form:
 
@@ -311,17 +315,21 @@ For EACH attachment, produce a JSON object with this exact shape:
   "one_line_summary": "Single sentence that captures the bug evidence from this image."
 }}
 
-CONTRADICTION DETECTION (very important)
-Compare what the email describes to what the image actually shows, and set `contradicts_email_claim` AGGRESSIVELY. Set it to a one-sentence description of the mismatch in any of these cases:
+CONTRADICTION DETECTION
+Flag `contradicts_email_claim` when the image does not match the email's MAIN REPORTED SYMPTOM. The image should show the actual bug or the screen where the bug occurs — not just a screen that appears incidentally in the repro steps.
 
-  • The image shows a different SLAP screen / feature than the one the email is about.
-    Example: email is about "Checkout / Proceed to Pay crash" but the image shows "Phone login / OTP" — contradicts_email_claim should say "Email reports a checkout-flow crash but the attached image is the phone-login screen with an OTP error — different feature areas."
+  FLAG (set to a one-sentence description) when:
+  • The image shows a screen/feature unrelated to the email's main symptom, even if that screen appears in the repro steps.
+    Example: email's main symptom is "preference-save toast error on Quick one for you bottomsheet" but the image shows only a product-results grid — no bottomsheet, no toast, no preference UI.
+    Example: email reports a "Checkout crash" but the image shows the Phone-login/OTP screen.
+  • The email describes a specific visible error (toast, crash dialog, wrong value displayed) but the image shows none of that symptom at all.
+    Example: email says "₹0 price shown for Muesli" but image shows correct non-zero prices.
+  • The email explicitly states one platform (Android/iOS) and the image unmistakably shows the other platform's UI chrome.
 
-  • The image shows no anomaly / a normal happy-path state while the email claims something is broken.
-  • The image shows a different platform than the email states (e.g. email says Android, image shows iOS — or vice versa).
-  • The image's visible error message or symptom does not match the symptom the email describes.
-
-Only set `contradicts_email_claim` to null when the image evidence clearly supports or is plausibly relevant to what the email is describing. When in doubt, FLAG IT — a triage analyst can override a false flag, but a missed contradiction wastes engineering time on the wrong bug.
+  DO NOT FLAG for:
+  • Image orientation (landscape vs portrait of the same screen).
+  • Image shows the correct screen/feature but at a different moment — as long as the screen matches the bug location.
+  • Any uncertainty — if it could go either way, leave `contradicts_email_claim` null.
 
 Reply with ONLY a JSON object of the form:
 
@@ -388,7 +396,7 @@ def _gemini_describe_images_parallel(image_paths: list) -> dict:
     workers = min(max(len(image_paths), 1), 4)
     with ThreadPoolExecutor(max_workers=workers) as ex:
         future_to_path = {
-            ex.submit(gemini_describe_image, p, VISION_PROMPT): p
+            ex.submit(gemini_describe_image, p, VISION_PROMPT, 2000): p
             for p in image_paths
         }
         try:
@@ -727,7 +735,7 @@ def _gemini_describe_frames_parallel(frame_paths: list) -> dict:
     paths_str = [str(p) for p in frame_paths]
     with ThreadPoolExecutor(max_workers=workers) as ex:
         future_to_path = {
-            ex.submit(gemini_describe_image, p, VIDEO_FRAME_VISION_PROMPT): p
+            ex.submit(gemini_describe_image, p, VIDEO_FRAME_VISION_PROMPT, 2000): p
             for p in paths_str
         }
         try:

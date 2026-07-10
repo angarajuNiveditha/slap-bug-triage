@@ -194,7 +194,7 @@ class EmbeddingSimilarityEngine:
         # (fresh install, DB migration in progress, etc.), we still want
         # the Jira results to flow through.
         try:
-            from . import db as ticket_db
+            from src.shared import db as ticket_db
             local_hits = ticket_db.local_similar(q, top_k=recall_k)
         except Exception as e:
             print(f"  [similarity] local store unavailable ({e}); Jira-only ranking")
